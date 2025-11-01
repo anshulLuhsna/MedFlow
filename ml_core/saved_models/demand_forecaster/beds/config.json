@@ -1,0 +1,30 @@
+{
+  "resource_type": "beds",
+  "sequence_length": 30,
+  "forecast_horizon": 14,
+  "input_features": [
+    "quantity",
+    "consumption",
+    "resupply",
+    "total_admissions",
+    "quantity_ma_7d",
+    "quantity_ma_14d",
+    "quantity_trend",
+    "consumption_trend",
+    "quantity_change",
+    "consumption_change",
+    "quantity_per_admission",
+    "consumption_rate",
+    "quantity_momentum",
+    "consumption_momentum",
+    "quantity_pct_change",
+    "consumption_pct_change",
+    "trend_direction"
+  ],
+  "total_features": 17,
+  "improvements": {
+    "directional_loss": true,
+    "momentum_features": true,
+    "version": "2.0"
+  }
+}
