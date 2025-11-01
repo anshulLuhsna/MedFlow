@@ -22,44 +22,107 @@ def calculate_resource_consumption(
     region: str,
     events: list
 ) -> int:
-    """Calculate daily resource consumption"""
-    
+    """Calculate daily resource consumption
+
+    IMPORTANT: For ML training, consumption must have:
+    1. Strong correlation with admissions (predictable signal)
+    2. Sufficient variation (not mostly zeros)
+    3. Realistic noise level (10-20%)
+    """
+
     base_consumption = 0
-    
+
     if resource_type == "ventilators":
-        # Mainly ICU patients - use probability-based approach to ensure variation
-        # If ICU patients exist, there's a chance they need ventilators
+        # FIXED v2: Ventilators track cumulative usage (ventilator-days)
+        # For ML training, we need to track DAILY USAGE not just new allocations
+        #
+        # Model: Ventilators are occupied continuously for multiple days
+        # At any time, there are ongoing patients + new patients
+        # This creates a more stable, predictable signal
+
         if icu_admissions > 0:
-            # Probability that an ICU patient needs a ventilator
-            prob_per_patient = resource_config["consumption_rate"]  # 0.15 = 15% chance
-            # Use expected value + randomness for better variation
-            expected = icu_admissions * prob_per_patient
-            # Round to nearest integer but add some randomness
-            base_consumption = max(0, int(expected + random.gauss(0, 0.3)))
-            # Ensure at least some consumption when ICU patients exist
+            # Rate: 60% of ICU patients need mechanical ventilation (realistic for severe cases)
+            # Duration: Patients stay on ventilators for 4-7 days average
+            ventilator_rate = 0.60
+            avg_duration_days = 5.0
+
+            # NEW APPROACH: Track cumulative daily usage
+            # Daily usage = new patients + existing patients still on ventilators
+            # Simplified: ICU_admissions * rate * duration approximates daily census
+            new_patients_needing_vent = icu_admissions * ventilator_rate
+
+            # Expected daily ventilator usage (cumulative)
+            # This is higher and more stable than just new allocations
+            expected = new_patients_needing_vent * (avg_duration_days / 2)  # Average ongoing usage
+
+            # Add variation
+            base_consumption = max(0, int(expected + random.gauss(0, max(1.0, expected * 0.15))))
+
+            # Ensure minimum usage when ICU exists
             if icu_admissions >= 2 and base_consumption == 0:
-                base_consumption = 1 if random.random() < 0.3 else 0  # 30% chance of at least 1
+                base_consumption = int(icu_admissions * 0.3)  # At least 30% of ICU patients
+            elif icu_admissions >= 1 and base_consumption == 0:
+                base_consumption = 1 if random.random() < 0.6 else 0
+
+            # Add small baseline usage even with low ICU (ongoing patients from previous days)
+            if base_consumption < 2 and random.random() < 0.3:
+                base_consumption += 1
         else:
-            base_consumption = 0
+            # No ICU patients = minimal ventilator usage (could have ongoing from previous days)
+            base_consumption = 1 if random.random() < 0.1 else 0
     
     elif resource_type == "o2_cylinders":
-        # Both ICU and regular patients - cylinders are consumed more frequently
-        base_consumption = int((icu_admissions * 1.5) + (admissions * 0.4))
-        # Ensure minimum if patients exist
+        # FIXED: O2 cylinders are consumed by many patients
+        # Both ICU and regular respiratory patients
+        # Strong correlation with admissions (good for ML)
+
+        # ICU patients: 2-3 cylinders per patient per day
+        # Regular respiratory patients: ~20% of admissions, 0.5-1 cylinder per day
+        icu_consumption = icu_admissions * random.uniform(2.0, 3.0)
+        regular_consumption = admissions * 0.20 * random.uniform(0.5, 1.0)
+
+        base_consumption = int(icu_consumption + regular_consumption)
+
+        # Ensure minimum consumption if patients exist (realistic floor)
         if admissions > 0 and base_consumption == 0:
-            base_consumption = 1
-    
+            base_consumption = max(1, int(admissions * 0.1))
+
     elif resource_type == "beds":
-        # Beds are "consumed" as occupancy
-        base_consumption = int(admissions * resource_config["consumption_rate"])
-    
+        # FIXED: Beds track occupancy (census), not consumption
+        # This is predictable from admissions with some persistence
+        # Average length of stay: 3-5 days
+        # Daily "consumption" = new occupied bed-days
+        avg_los = 3.5  # Average length of stay
+        base_consumption = int(admissions * resource_config["consumption_rate"] * (avg_los / 7))
+
+        # Ensure realistic floor
+        if admissions > 0 and base_consumption == 0:
+            base_consumption = int(admissions * 0.5)  # At least half of admissions
+
     elif resource_type == "medications":
-        # All patients consume medications - already works well
-        base_consumption = int(admissions * resource_config["consumption_rate"])
-    
+        # FIXED: Medications have strong signal from admissions
+        # All patients consume medications, with variation by severity
+        # Rate: 3-7 doses per patient per day (average 5 from config)
+        variation = random.uniform(0.8, 1.2)
+        base_consumption = int(admissions * resource_config["consumption_rate"] * variation)
+
+        # Ensure realistic minimum
+        if admissions > 0 and base_consumption == 0:
+            base_consumption = max(1, admissions)
+
     elif resource_type == "ppe":
-        # Staff use PPE, proportional to patient load
-        base_consumption = int(admissions * resource_config["consumption_rate"])
+        # FIXED: PPE consumption from staff (scales with patient load)
+        # Staff-to-patient ratio ~1:4, each staff uses 2-3 sets per shift
+        # This creates predictable signal from admissions
+        staff_ratio = 0.25  # 1 staff per 4 patients
+        ppe_per_staff = 2.5  # Sets per shift
+
+        variation = random.uniform(0.9, 1.1)
+        base_consumption = int(admissions * staff_ratio * ppe_per_staff * variation)
+
+        # Ensure realistic minimum
+        if admissions > 0 and base_consumption == 0:
+            base_consumption = max(1, int(admissions * 0.3))
     
     # Check for events that affect this resource
     for event in events:
@@ -67,10 +130,17 @@ def calculate_resource_consumption(
             if region in event.get("affected_regions", []):
                 multiplier = event.get("resource_multiplier", {}).get(resource_type, 1.0)
                 base_consumption = int(base_consumption * multiplier)
-    
-    # Add noise (but ensure non-negative)
+
+    # Add noise for realism (10% noise level - good for ML training)
+    # Too little noise = model overfits
+    # Too much noise = model can't learn signal
+    # 10% is the sweet spot for medical data
     consumption_with_noise = add_noise(base_consumption, noise_level=0.10)
-    return max(0, int(consumption_with_noise))
+
+    # Ensure non-negative (consumption can't be negative)
+    final_consumption = max(0, int(consumption_with_noise))
+
+    return final_consumption
 
 def calculate_resupply(
     current_stock: int,

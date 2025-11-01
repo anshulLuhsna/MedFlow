@@ -7,9 +7,22 @@ import random
 from .patterns import generate_realistic_value
 
 def calculate_base_admissions(hospital_capacity: int) -> int:
-    """Calculate base daily admissions based on hospital size"""
-    # Rough estimate: 5-10% of capacity as daily admissions
-    return int(hospital_capacity * random.uniform(0.05, 0.10))
+    """Calculate base daily admissions based on hospital size
+
+    IMPORTANT: For ML training, admissions must be:
+    1. Realistic (hospitals have patients every day)
+    2. Sufficient volume (not mostly zeros)
+    3. Correlated with hospital size
+    """
+    # FIXED: 5-10% of capacity as daily admissions
+    # Ensure minimum admissions for small hospitals (realistic floor)
+    base = int(hospital_capacity * random.uniform(0.05, 0.10))
+
+    # Minimum admissions even for smallest hospitals
+    # Small hospital (50 beds) should have at least 3-5 patients/day
+    minimum = max(3, int(hospital_capacity * 0.03))
+
+    return max(base, minimum)
 
 def generate_admission_severity() -> float:
     """Generate average severity score for the day (1-5 scale)"""
@@ -18,11 +31,25 @@ def generate_admission_severity() -> float:
     return max(1.0, min(5.0, round(severity, 2)))
 
 def calculate_icu_admissions(total_admissions: int, severity: float) -> int:
-    """Calculate ICU admissions based on total and severity"""
-    # Higher severity = more ICU admissions
+    """Calculate ICU admissions based on total and severity
+
+    IMPORTANT: ICU admissions drive ventilator/O2 consumption
+    Must have sufficient volume for ML training
+    """
+    # FIXED: Higher severity = more ICU admissions
+    # Base rate: 10-20% (realistic for Indian hospitals)
+    # Severity adjustment: ±5% based on patient acuity
     icu_rate = 0.10 + (severity - 2.5) * 0.05  # 10-20% ICU rate
-    icu_rate = max(0.05, min(0.25, icu_rate))
-    return int(total_admissions * icu_rate)
+    icu_rate = max(0.08, min(0.25, icu_rate))  # Increased minimum from 5% to 8%
+
+    icu_admissions = int(total_admissions * icu_rate)
+
+    # Ensure minimum ICU admissions for large patient volumes
+    # Large hospitals should have at least 1-2 ICU patients/day
+    if total_admissions >= 20 and icu_admissions == 0:
+        icu_admissions = 1 if random.random() < 0.7 else 2
+
+    return icu_admissions
 
 def calculate_emergency_admissions(total_admissions: int) -> int:
     """Calculate emergency admissions"""
