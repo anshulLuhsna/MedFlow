@@ -290,10 +290,24 @@ class DataLoader:
             # Add rate of change features
             hospital_data['quantity_change'] = hospital_data['quantity'].diff().fillna(0)
             hospital_data['consumption_change'] = hospital_data['consumption'].diff().fillna(0)
-            
+
             # Add relative features (normalized by admissions)
             hospital_data['quantity_per_admission'] = hospital_data['quantity'] / (hospital_data['total_admissions'] + 1)
             hospital_data['consumption_rate'] = hospital_data['consumption'] / (hospital_data['total_admissions'] + 1)
+
+            # NEW: Momentum features (2nd derivative - acceleration)
+            # These help the model understand if the rate of change is accelerating/decelerating
+            hospital_data['quantity_momentum'] = hospital_data['quantity_change'].diff().fillna(0)
+            hospital_data['consumption_momentum'] = hospital_data['consumption_change'].diff().fillna(0)
+
+            # NEW: Percentage changes (more robust to scale differences)
+            # Percentage changes are better for detecting relative trends
+            hospital_data['quantity_pct_change'] = hospital_data['quantity'].pct_change().fillna(0).replace([np.inf, -np.inf], 0)
+            hospital_data['consumption_pct_change'] = hospital_data['consumption'].pct_change().fillna(0).replace([np.inf, -np.inf], 0)
+
+            # NEW: Trend direction indicator (-1, 0, or 1)
+            # Explicit signal about whether quantity is trending up or down
+            hospital_data['trend_direction'] = np.sign(hospital_data['quantity_trend']).fillna(0)
             
             enhanced_data.append(hospital_data)
         
@@ -328,11 +342,22 @@ class DataLoader:
             
             # Extract features and target - now with enhanced features
             feature_cols = [
+                # Base features (4)
                 'quantity', 'consumption', 'resupply', 'total_admissions',
-                'quantity_ma_7d', 'quantity_ma_14d', 'quantity_trend',
-                'consumption_trend', 'quantity_change', 'consumption_change',
-                'quantity_per_admission', 'consumption_rate'
+                # Trend features (4)
+                'quantity_ma_7d', 'quantity_ma_14d', 'quantity_trend', 'consumption_trend',
+                # Change features (2)
+                'quantity_change', 'consumption_change',
+                # Normalized features (2)
+                'quantity_per_admission', 'consumption_rate',
+                # NEW: Momentum features (2) - acceleration/deceleration
+                'quantity_momentum', 'consumption_momentum',
+                # NEW: Percentage change features (2) - relative trends
+                'quantity_pct_change', 'consumption_pct_change',
+                # NEW: Directional indicator (1) - explicit trend direction
+                'trend_direction'
             ]
+            # Total: 17 features (was 12)
             
             # Ensure all columns exist (fill missing with 0)
             for col in feature_cols:
@@ -345,7 +370,10 @@ class DataLoader:
             hospital_sequences = 0
             for i in range(len(features) - sequence_length - forecast_horizon):
                 X_list.append(features[i:i+sequence_length])
-                y_list.append(features[i+sequence_length:i+sequence_length+forecast_horizon, 0])  # Predict quantity
+                # CHANGED: Predict consumption (index 1) instead of quantity (index 0)
+                # Consumption is the actual demand, which is predictable from admissions
+                # Quantity includes random resupply decisions, making it unpredictable
+                y_list.append(features[i+sequence_length:i+sequence_length+forecast_horizon, 1])  # Predict consumption
                 metadata_list.append({
                     'hospital_id': hospital_id,
                     'date': hospital_data.iloc[i+sequence_length]['date']
