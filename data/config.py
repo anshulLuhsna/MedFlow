@@ -48,36 +48,46 @@ SPECIALIZATIONS = [
 ]
 
 # Resource types and their parameters
+# UPDATED: Fixed consumption rates for ML training
+# All rates now ensure:
+# 1. Strong correlation with admissions (predictable signal)
+# 2. Sufficient variation (not mostly zeros)
+# 3. Realistic noise level (10%)
 RESOURCES = {
     "ventilators": {
         "baseline_per_bed": 0.02,  # 2 ventilators per 100 beds
         "critical_threshold": 2,
-        "consumption_rate": 0.15,  # 15% of ICU patients need ventilators
-        "unit": "units"
+        "consumption_rate": 0.60,  # FIXED v2: 60% of ICU patients need ventilators (cumulative daily usage)
+        "unit": "ventilator-days",
+        "notes": "Tracks cumulative daily ventilator-days (ongoing + new patients)"
     },
     "o2_cylinders": {
         "baseline_per_bed": 0.5,  # 50 cylinders per 100 beds
         "critical_threshold": 10,
-        "consumption_rate": 0.8,  # 80% replacement rate per week
-        "unit": "cylinders"
+        "consumption_rate": 2.5,  # FIXED: 2-3 cylinders per ICU patient, 0.5-1 per respiratory patient
+        "unit": "cylinders",
+        "notes": "High consumption, strong correlation with admissions"
     },
     "beds": {
         "baseline_per_bed": 1.0,  # Same as hospital capacity
         "critical_threshold": 5,
         "consumption_rate": 0.7,  # 70% occupancy on average
-        "unit": "beds"
+        "unit": "beds",
+        "notes": "Tracks bed-days (occupancy), average LOS = 3.5 days"
     },
     "medications": {
         "baseline_per_bed": 10,  # 10 doses per bed
         "critical_threshold": 100,
         "consumption_rate": 5,  # 5 doses per patient per day on average
-        "unit": "doses"
+        "unit": "doses",
+        "notes": "All patients consume medications, strong signal"
     },
     "ppe": {
         "baseline_per_bed": 5,  # 5 PPE sets per bed
         "critical_threshold": 50,
-        "consumption_rate": 2,  # 2 sets per patient per day
-        "unit": "sets"
+        "consumption_rate": 2.5,  # FIXED: Staff-based consumption (was 2)
+        "unit": "sets",
+        "notes": "Staff-to-patient ratio 1:4, 2-3 sets per staff per shift"
     }
 }
 
