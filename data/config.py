@@ -5,7 +5,8 @@ Configuration for synthetic data generation
 from datetime import datetime, timedelta
 
 # Time period
-START_DATE = datetime(2024, 5, 1)  # 6 months ago from now
+# Extended to 18 months for better LSTM training (more sequences per hospital)
+START_DATE = datetime(2023, 11, 1)  # 18 months ago from Oct 2024
 END_DATE = datetime(2024, 10, 30)
 TOTAL_DAYS = (END_DATE - START_DATE).days
 
@@ -124,13 +125,20 @@ SUPPLY_DISRUPTIONS = [
 ]
 
 # Seasonal patterns (flu season, summer lull, etc.)
+# Extended to cover full 18-month period (Nov 2023 - Oct 2024)
 SEASONAL_FACTORS = {
-    5: 1.05,  # May - heatwave impacts in parts of India
-    6: 1.10,  # June - pre-monsoon/early monsoon onset
-    7: 1.15,  # July - monsoon illnesses rise
-    8: 1.20,  # August - monsoon peak, water/air-borne diseases
-    9: 1.25,  # September - post-monsoon vector-borne peaks (e.g., dengue)
-    10: 1.20  # October - elevated respiratory and vector-borne cases
+    11: 1.15,  # November - post-monsoon respiratory illnesses
+    12: 1.10,  # December - winter onset, respiratory cases
+    1: 1.05,   # January - winter peak respiratory
+    2: 0.95,   # February - transition period
+    3: 0.90,   # March - spring, lower baseline
+    4: 0.95,   # April - pre-summer baseline
+    5: 1.05,   # May - heatwave impacts in parts of India
+    6: 1.10,   # June - pre-monsoon/early monsoon onset
+    7: 1.15,   # July - monsoon illnesses rise
+    8: 1.20,   # August - monsoon peak, water/air-borne diseases
+    9: 1.25,   # September - post-monsoon vector-borne peaks (e.g., dengue)
+    10: 1.20   # October - elevated respiratory and vector-borne cases
 }
 
 # Weekly patterns (lower on weekends)
