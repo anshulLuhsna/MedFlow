@@ -1,2 +1,16 @@
 /venv
 .env
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+
+# Generated data
+data/generated/
+ml_core/evaluation_results/
+
+# Model checkpoints (optional - uncomment if you don't want to commit models)
+# ml_core/saved_models/
