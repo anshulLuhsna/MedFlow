@@ -160,6 +160,42 @@ def main():
         supabase: Client = create_client(supabase_url, supabase_key)
         print("✓ Connected to Supabase\n")
         
+        # Option to clear existing data
+        clear_existing = input("Clear existing synthetic data first? (yes/no): ").strip().lower()
+        if clear_existing == "yes":
+            print("\nClearing existing data...")
+            
+            # Clear tables in order (child tables first due to FK constraints)
+            tables_to_clear = [
+                ("inventory_history", "inventory history"),
+                ("patient_admissions", "patient admissions"),
+                ("resource_inventory", "current inventory"),
+                ("events", "events"),
+            ]
+            
+            for table_name, description in tables_to_clear:
+                try:
+                    print(f"  Clearing {description}...", end=" ")
+                    supabase.table(table_name).delete().neq("id", "00000000-0000-0000-0000-000000000000").execute()
+                    print("✓")
+                except Exception as e:
+                    if "does not exist" in str(e).lower() or "not found" in str(e).lower():
+                        print("✓ (empty)")
+                    else:
+                        print(f"✗ Error: {e}")
+            
+            # Optionally clear hospitals
+            clear_hospitals = input("  Also clear hospitals? (yes/no): ").strip().lower()
+            if clear_hospitals == "yes":
+                try:
+                    print("  Clearing hospitals...", end=" ")
+                    supabase.table("hospitals").delete().neq("id", "00000000-0000-0000-0000-000000000000").execute()
+                    print("✓")
+                except Exception as e:
+                    print(f"✗ Error: {e}")
+            
+            print("✓ Existing data cleared\n")
+        
         # Fetch resource type IDs for mapping
         try:
             rt_resp = supabase.table("resource_types").select("id,name").execute()

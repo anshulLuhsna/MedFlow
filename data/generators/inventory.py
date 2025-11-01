@@ -27,19 +27,34 @@ def calculate_resource_consumption(
     base_consumption = 0
     
     if resource_type == "ventilators":
-        # Mainly ICU patients
-        base_consumption = int(icu_admissions * resource_config["consumption_rate"])
+        # Mainly ICU patients - use probability-based approach to ensure variation
+        # If ICU patients exist, there's a chance they need ventilators
+        if icu_admissions > 0:
+            # Probability that an ICU patient needs a ventilator
+            prob_per_patient = resource_config["consumption_rate"]  # 0.15 = 15% chance
+            # Use expected value + randomness for better variation
+            expected = icu_admissions * prob_per_patient
+            # Round to nearest integer but add some randomness
+            base_consumption = max(0, int(expected + random.gauss(0, 0.3)))
+            # Ensure at least some consumption when ICU patients exist
+            if icu_admissions >= 2 and base_consumption == 0:
+                base_consumption = 1 if random.random() < 0.3 else 0  # 30% chance of at least 1
+        else:
+            base_consumption = 0
     
     elif resource_type == "o2_cylinders":
-        # Both ICU and regular patients
-        base_consumption = int((icu_admissions * 2) + (admissions * 0.3))
+        # Both ICU and regular patients - cylinders are consumed more frequently
+        base_consumption = int((icu_admissions * 1.5) + (admissions * 0.4))
+        # Ensure minimum if patients exist
+        if admissions > 0 and base_consumption == 0:
+            base_consumption = 1
     
     elif resource_type == "beds":
         # Beds are "consumed" as occupancy
         base_consumption = int(admissions * resource_config["consumption_rate"])
     
     elif resource_type == "medications":
-        # All patients consume medications
+        # All patients consume medications - already works well
         base_consumption = int(admissions * resource_config["consumption_rate"])
     
     elif resource_type == "ppe":
@@ -53,8 +68,9 @@ def calculate_resource_consumption(
                 multiplier = event.get("resource_multiplier", {}).get(resource_type, 1.0)
                 base_consumption = int(base_consumption * multiplier)
     
-    # Add noise
-    return add_noise(base_consumption, noise_level=0.10)
+    # Add noise (but ensure non-negative)
+    consumption_with_noise = add_noise(base_consumption, noise_level=0.10)
+    return max(0, int(consumption_with_noise))
 
 def calculate_resupply(
     current_stock: int,
@@ -77,9 +93,18 @@ def calculate_resupply(
         resupply = int(resupply * random.uniform(0.8, 1.2))
         return max(0, resupply)
     
+    # For resources with low consumption (like ventilators), ensure periodic resupply
+    # to maintain inventory variation
+    if resource_type == "ventilators":
+        # More frequent but smaller resupplies for ventilators
+        if random.random() < 0.4:  # 40% chance of routine resupply
+            # Small resupply to replace any consumption or maintain levels
+            return max(0, int(consumption * random.uniform(0.8, 1.5)) + (1 if random.random() < 0.3 else 0))
+    
     # Random small resupply even when not critically low (routine procurement)
-    if random.random() < 0.2:  # 20% chance
-        return int(consumption * random.uniform(0.5, 1.0))
+    # Increased frequency for better variation
+    if random.random() < 0.3:  # 30% chance (increased from 20%)
+        return int(consumption * random.uniform(0.5, 1.2))
     
     return 0
 
@@ -185,6 +210,14 @@ def generate_inventory_data(
                 # Update stock
                 current_stock = current_stock - consumption + resupply
                 current_stock = max(0, current_stock)  # Can't go negative
+                
+                # Ensure minimum variation for learning (especially for low-consumption resources)
+                # Add small random adjustments to prevent completely static inventory
+                if resource_type in ["ventilators", "o2_cylinders"]:
+                    # Once every ~10 days, add small random adjustment (±1 unit)
+                    if day_idx % 10 == 0 and random.random() < 0.5:
+                        adjustment = random.choice([-1, 0, 1])
+                        current_stock = max(0, current_stock + adjustment)
                 
                 # Record history
                 inventory_history.append({
