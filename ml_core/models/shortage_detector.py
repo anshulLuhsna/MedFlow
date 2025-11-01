@@ -13,8 +13,8 @@ import json
 
 # Handle both relative and absolute imports
 try:
-    from ..config import SHORTAGE_DETECTION_CONFIG, MODEL_PATHS, RESOURCE_TYPES
-    from ..utils.feature_engineering import engineer_shortage_features
+from ..config import SHORTAGE_DETECTION_CONFIG, MODEL_PATHS, RESOURCE_TYPES
+from ..utils.feature_engineering import engineer_shortage_features
 except ImportError:
     from config import SHORTAGE_DETECTION_CONFIG, MODEL_PATHS, RESOURCE_TYPES
     from utils.feature_engineering import engineer_shortage_features
