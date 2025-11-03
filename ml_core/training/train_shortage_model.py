@@ -19,47 +19,71 @@ if str(parent_dir) not in sys.path:
 from models.shortage_detector import ShortageDetector
 from models.demand_forecaster import DemandForecaster
 from utils.data_loader import DataLoader
-from utils.feature_engineering import engineer_shortage_features
+from utils.shortage_features import engineer_shortage_features
 from config import RESOURCE_TYPES
 from sklearn.model_selection import train_test_split
 import pandas as pd
+import numpy as np
 
 
 def prepare_shortage_training_data():
     """Prepare training data for shortage detection"""
-    
+
     print("Preparing shortage detection training data...")
-    
+
     data_loader = DataLoader()
-    
-    # Get current inventory (use historical snapshots)
+
+    # Get current inventory
+    print("Loading inventory data...")
     inventory = data_loader.get_current_inventory()
-    
+
     # Get admissions history
+    print("Loading admissions history...")
     admissions = data_loader.get_admissions_history()
-    
+
     # Get hospital info
+    print("Loading hospital info...")
     hospitals = data_loader.get_hospitals()
-    
-    # Create mock demand predictions (in production, use actual forecasters)
-    # For training, we'll use historical consumption as proxy for predictions
+
+    # Create demand predictions using historical consumption
+    print("Creating demand predictions from historical data...")
     inventory_history = data_loader.get_inventory_history()
     
-    demand_predictions = inventory_history.groupby(['hospital_id', 'resource_type_id']).agg({
-        'consumption': 'mean'
-    }).reset_index()
-    demand_predictions.columns = ['hospital_id', 'resource_type_id', 'predicted_demand_7d']
-    demand_predictions['predicted_demand_14d'] = demand_predictions['predicted_demand_7d'] * 2
-    demand_predictions['demand_trend'] = 0
-    
+    # Get resource type mapping (ID -> name)
+    resource_types_df = data_loader.get_resource_types()
+    resource_type_map = dict(zip(resource_types_df['id'], resource_types_df['name']))
+
+    # Create 14-day predictions for each hospital-resource pair
+    demand_predictions_list = []
+
+    for (hospital_id, resource_type_id), group in inventory_history.groupby(['hospital_id', 'resource_type_id']):
+        # Map resource_type_id to resource_type name
+        resource_type_name = resource_type_map.get(resource_type_id, str(resource_type_id))
+        
+        avg_consumption = group['consumption'].mean()
+
+        # Create 14-day forecast (simple average)
+        for day in range(14):
+            demand_predictions_list.append({
+                'hospital_id': hospital_id,
+                'resource_type': resource_type_name,
+                'day': day,
+                'predicted_consumption': avg_consumption + np.random.normal(0, avg_consumption * 0.1)
+            })
+
+    demand_predictions = pd.DataFrame(demand_predictions_list)
+
+    print(f"Created {len(demand_predictions)} demand predictions")
+
     # Engineer features
+    print("Engineering features...")
     features = engineer_shortage_features(
         current_inventory=inventory,
         demand_predictions=demand_predictions,
         admissions_history=admissions,
         hospital_info=hospitals
     )
-    
+
     return features
 
 
