@@ -13,11 +13,11 @@ import json
 
 # Handle both relative and absolute imports
 try:
-from ..config import SHORTAGE_DETECTION_CONFIG, MODEL_PATHS, RESOURCE_TYPES
-from ..utils.feature_engineering import engineer_shortage_features
+    from ..config import SHORTAGE_DETECTION_CONFIG, MODEL_PATHS, RESOURCE_TYPES
+    from ..utils.shortage_features import engineer_shortage_features
 except ImportError:
     from config import SHORTAGE_DETECTION_CONFIG, MODEL_PATHS, RESOURCE_TYPES
-    from utils.feature_engineering import engineer_shortage_features
+    from utils.shortage_features import engineer_shortage_features
 
 
 class ShortageDetector:
@@ -92,8 +92,28 @@ class ShortageDetector:
         if y is None:
             y = self.create_risk_labels(X)
         
-        # Store feature names
-        self.feature_names = X.columns.tolist()
+        # Filter out non-numeric columns (like hospital_id, resource_type)
+        # Only keep columns that can be converted to numeric
+        numeric_columns = []
+        for col in X.columns:
+            if col in ['hospital_id', 'resource_type']:
+                continue  # Skip metadata columns
+            try:
+                # Try to convert to numeric - if it fails, it's not numeric
+                pd.to_numeric(X[col], errors='raise')
+                numeric_columns.append(col)
+            except (ValueError, TypeError):
+                # Skip non-numeric columns
+                continue
+        
+        if not numeric_columns:
+            raise ValueError("No numeric features found in input data. Please check your feature engineering.")
+        
+        # Select only numeric columns
+        X_numeric = X[numeric_columns].copy()
+        
+        # Store feature names (only numeric ones)
+        self.feature_names = numeric_columns
         
         # Encode labels
         y_encoded = self.label_encoder.transform(y)
@@ -110,10 +130,10 @@ class ShortageDetector:
             for label, count in zip(unique, counts):
                 print(f"  {label}: {count} ({count/len(y)*100:.1f}%)")
         
-        self.model.fit(X, y_encoded)
+        self.model.fit(X_numeric, y_encoded)
         
         # Calculate training metrics
-        y_pred = self.model.predict(X)
+        y_pred = self.model.predict(X_numeric)
         accuracy = np.mean(y_pred == y_encoded)
         
         # Feature importance
@@ -156,15 +176,28 @@ class ShortageDetector:
         if self.model is None:
             raise ValueError("Model not trained. Call train() or load() first.")
         
-        # Ensure features match training
-        X = X[self.feature_names]
+        # Ensure features match training (only numeric features)
+        missing_features = set(self.feature_names) - set(X.columns)
+        if missing_features:
+            raise ValueError(f"Missing required features: {missing_features}")
+        
+        # Select only the features used during training
+        X_numeric = X[self.feature_names].copy()
+        
+        # Ensure all columns are numeric
+        for col in X_numeric.columns:
+            if not pd.api.types.is_numeric_dtype(X_numeric[col]):
+                try:
+                    X_numeric[col] = pd.to_numeric(X_numeric[col], errors='coerce')
+                except (ValueError, TypeError):
+                    raise ValueError(f"Column '{col}' cannot be converted to numeric. Please check your data.")
         
         # Predict
-        y_pred_encoded = self.model.predict(X)
+        y_pred_encoded = self.model.predict(X_numeric)
         y_pred = self.label_encoder.inverse_transform(y_pred_encoded)
         
         if return_probabilities:
-            probabilities = self.model.predict_proba(X)
+            probabilities = self.model.predict_proba(X_numeric)
             return y_pred, probabilities
         
         return y_pred
