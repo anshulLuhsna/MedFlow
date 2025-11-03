@@ -12,7 +12,7 @@ from datetime import datetime
 
 # Handle both relative and absolute imports
 try:
-from ..config import OPTIMIZATION_CONFIG, RESOURCE_TYPES
+    from ..config import OPTIMIZATION_CONFIG, RESOURCE_TYPES
 except ImportError:
     from config import OPTIMIZATION_CONFIG, RESOURCE_TYPES
 
@@ -101,9 +101,11 @@ class ResourceOptimizer:
                     continue
                 
                 # Get distance
-                surplus_info = hospital_info[hospital_info['id'] == surplus_id].iloc[0]
-                shortage_info = hospital_info[hospital_info['id'] == shortage_id].iloc[0]
-                distance = self.calculate_distance(surplus_info, shortage_info)
+                # Handle both 'id' and 'hospital_id' column names
+                id_col = 'hospital_id' if 'hospital_id' in hospital_info.columns else 'id'
+                surplus_info = hospital_info[hospital_info[id_col] == surplus_id].iloc[0]
+                shortage_info = hospital_info[hospital_info[id_col] == shortage_id].iloc[0]
+                distance = self.calculate_distance(surplus_info.to_dict(), shortage_info.to_dict())
                 
                 # Skip if too far
                 if distance > self.config['max_transfer_distance_km']:
@@ -127,6 +129,7 @@ class ResourceOptimizer:
         if not transfers:
             return {
                 'status': 'no_feasible_transfers',
+                'resource_type': resource_type,
                 'message': 'No surplus hospitals within range of shortage hospitals',
                 'allocations': []
             }
@@ -161,12 +164,16 @@ class ResourceOptimizer:
         # 3. Minimize number of transfers (complexity)
         # Binary variables to track if transfer happens
         transfer_binary = {}
+        M = 1000000  # Large constant for big-M formulation
         for key in transfers.keys():
             var_name = f"binary_{key[0][:8]}_{key[1][:8]}"
             transfer_binary[key] = LpVariable(var_name, 0, 1, LpBinary)
             
             # Link binary to transfer: if transfer > 0, binary = 1
-            prob += transfers[key]['var'] <= transfers[key]['max_quantity'] * transfer_binary[key]
+            # Big-M formulation: transfer <= M * binary (if transfer > 0, binary must be 1)
+            # Also: transfer >= 0.01 * binary (if binary = 1, transfer must be > 0, but LP needs >)
+            prob += transfers[key]['var'] <= M * transfer_binary[key]
+            prob += transfers[key]['var'] >= 0.01 * transfer_binary[key]  # If binary=1, transfer must be at least 0.01
         
         complexity_objective = lpSum(transfer_binary.values()) * 100
         
@@ -210,14 +217,21 @@ class ResourceOptimizer:
         for _, critical in critical_hospitals.iterrows():
             critical_id = critical['hospital_id']
             
-            # Must receive at least 50% of need or 1 unit (whichever is less)
-            min_allocation = min(1, critical['quantity_needed'] * 0.5)
+            # Check if there are any feasible transfers to this critical hospital
+            critical_transfers = [
+                key for key in transfers.keys()
+                if key[1] == critical_id
+            ]
             
-            prob += lpSum([
-                transfers[(surplus_id, sid)]['var']
-                for surplus_id, sid in transfers.keys()
-                if sid == critical_id
-            ]) >= min_allocation
+            if critical_transfers:
+                # Must receive at least 50% of need or 1 unit (whichever is less)
+                # But don't force if it would make problem infeasible
+                min_allocation = min(1, int(critical['quantity_needed'] * 0.5))
+                if min_allocation > 0:
+                    prob += lpSum([
+                        transfers[key]['var']
+                        for key in critical_transfers
+                    ]) >= min_allocation
         
         # Solve
         prob.solve(PULP_CBC_CMD(msg=0, timeLimit=self.config['time_limit']))
@@ -227,7 +241,8 @@ class ResourceOptimizer:
         
         if status != 'Optimal':
             return {
-                'status': status,
+                'status': status.lower() if isinstance(status, str) else status,
+                'resource_type': resource_type,
                 'message': f'Optimization failed with status: {status}',
                 'allocations': []
             }
