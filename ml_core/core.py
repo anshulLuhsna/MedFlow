@@ -40,8 +40,13 @@ class MLCore:
         
         self.shortage_detector = ShortageDetector()
         self.optimizer = ResourceOptimizer()
-        self.preference_learner = PreferenceLearner()
-        
+
+        # Initialize with hybrid features (Groq LLM + Qdrant Vector Store)
+        self.preference_learner = PreferenceLearner(
+            use_llm=True,
+            use_vector_store=True
+        )
+
         # Load trained models
         self.load_models()
     
@@ -248,12 +253,59 @@ class MLCore:
             all_shortages = self.detect_shortages(resource_type)
             shortage_hospitals = all_shortages[
                 all_shortages['risk_level'].isin(['high', 'critical'])
-            ]
+            ].copy()
         else:
             shortage_hospitals = self.detect_shortages(resource_type)
             shortage_hospitals = shortage_hospitals[
                 shortage_hospitals['hospital_id'].isin(shortage_hospital_ids)
+            ].copy()
+        
+        # Calculate quantity_needed from shortage detection results
+        # quantity_needed = predicted_demand_7d - current_stock (but ensure positive)
+        if not shortage_hospitals.empty:
+            # Get current inventory to calculate quantity needed
+            current_inventory = self.data_loader.get_current_inventory()
+            resource_inventory = current_inventory[
+                current_inventory['resource_type'] == resource_type
             ]
+            
+            # Merge to get current stock
+            shortage_hospitals = shortage_hospitals.merge(
+                resource_inventory[['hospital_id', 'quantity', 'available_quantity']],
+                on='hospital_id',
+                how='left'
+            )
+            
+            # Calculate quantity needed based on days of supply and predicted demand
+            # If we have predicted_demand_7d from shortage detection, use it
+            if 'predicted_demand_7d' in shortage_hospitals.columns:
+                # quantity_needed = demand - current_stock, but at least days_of_supply suggests need
+                shortage_hospitals['quantity_needed'] = (
+                    shortage_hospitals.get('predicted_demand_7d', 0) - 
+                    shortage_hospitals.get('current_stock', shortage_hospitals.get('quantity', 0))
+                ).clip(lower=1)  # At least need 1 unit
+            elif 'days_of_supply' in shortage_hospitals.columns:
+                # Estimate from days_of_supply: if days < 7, need enough for 7 days
+                shortage_hospitals['quantity_needed'] = shortage_hospitals.apply(
+                    lambda row: max(1, int(row.get('current_stock', row.get('quantity', 0)) * 
+                                          (7 / max(row.get('days_of_supply', 7), 0.1)) - 
+                                          row.get('current_stock', row.get('quantity', 0)))),
+                    axis=1
+                )
+            else:
+                # Fallback: assume need 50% more than current stock for critical, 20% for high
+                shortage_hospitals['quantity_needed'] = shortage_hospitals.apply(
+                    lambda row: max(1, int(row.get('current_stock', row.get('quantity', 0)) * 
+                                          (1.5 if row['risk_level'] == 'critical' else 1.2) - 
+                                          row.get('current_stock', row.get('quantity', 0)))),
+                    axis=1
+                )
+            
+            # Ensure we have required columns
+            required_cols = ['hospital_id', 'quantity_needed', 'risk_level']
+            missing_cols = [col for col in required_cols if col not in shortage_hospitals.columns]
+            if missing_cols:
+                raise ValueError(f"Missing required columns in shortage_hospitals: {missing_cols}")
         
         # Find hospitals with surplus
         current_inventory = self.data_loader.get_current_inventory()
@@ -269,7 +321,14 @@ class MLCore:
         
         surplus_hospitals = resource_inventory[
             resource_inventory['available_quantity'] > threshold * 2
-        ]
+        ].copy()
+        
+        # Ensure surplus_hospitals has required columns
+        if not surplus_hospitals.empty:
+            required_surplus_cols = ['hospital_id', 'available_quantity']
+            missing_surplus_cols = [col for col in required_surplus_cols if col not in surplus_hospitals.columns]
+            if missing_surplus_cols:
+                raise ValueError(f"Missing required columns in surplus_hospitals: {missing_surplus_cols}")
         
         # Get hospital info
         hospitals = self.data_loader.get_hospitals()
@@ -300,7 +359,42 @@ class MLCore:
         all_shortages = self.detect_shortages(resource_type)
         shortage_hospitals = all_shortages[
             all_shortages['risk_level'].isin(['high', 'critical'])
-        ]
+        ].copy()
+        
+        # Calculate quantity_needed (same logic as optimize_allocation)
+        if not shortage_hospitals.empty:
+            current_inventory = self.data_loader.get_current_inventory()
+            resource_inventory = current_inventory[
+                current_inventory['resource_type'] == resource_type
+            ]
+            
+            # Merge to get current stock
+            shortage_hospitals = shortage_hospitals.merge(
+                resource_inventory[['hospital_id', 'quantity', 'available_quantity']],
+                on='hospital_id',
+                how='left'
+            )
+            
+            # Calculate quantity needed
+            if 'predicted_demand_7d' in shortage_hospitals.columns:
+                shortage_hospitals['quantity_needed'] = (
+                    shortage_hospitals.get('predicted_demand_7d', 0) - 
+                    shortage_hospitals.get('current_stock', shortage_hospitals.get('quantity', 0))
+                ).clip(lower=1)
+            elif 'days_of_supply' in shortage_hospitals.columns:
+                shortage_hospitals['quantity_needed'] = shortage_hospitals.apply(
+                    lambda row: max(1, int(row.get('current_stock', row.get('quantity', 0)) * 
+                                          (7 / max(row.get('days_of_supply', 7), 0.1)) - 
+                                          row.get('current_stock', row.get('quantity', 0)))),
+                    axis=1
+                )
+            else:
+                shortage_hospitals['quantity_needed'] = shortage_hospitals.apply(
+                    lambda row: max(1, int(row.get('current_stock', row.get('quantity', 0)) * 
+                                          (1.5 if row['risk_level'] == 'critical' else 1.2) - 
+                                          row.get('current_stock', row.get('quantity', 0)))),
+                    axis=1
+                )
         
         # Find surplus
         current_inventory = self.data_loader.get_current_inventory()
@@ -315,7 +409,7 @@ class MLCore:
         
         surplus_hospitals = resource_inventory[
             resource_inventory['available_quantity'] > threshold * 2
-        ]
+        ].copy()
         
         # Get hospital info
         hospitals = self.data_loader.get_hospitals()
@@ -341,39 +435,56 @@ class MLCore:
         interaction: Dict
     ):
         """
-        Update user preferences from interaction
-        
+        Update user preferences from interaction (with hybrid system)
+
         Args:
             user_id: User identifier
-            interaction: Dict with interaction details
+            interaction: Dict with interaction details including:
+                - selected_recommendation_index: Index of chosen recommendation
+                - recommendations: List of recommendations shown
+                - timestamp: ISO timestamp
         """
-        self.preference_learner.update_from_interaction(interaction)
-        
-        # Store in database (you could also store in Qdrant here)
-        # For now, just update the model
+        # Use enhanced method that stores in vector DB + updates RF model
+        self.preference_learner.update_from_interaction_enhanced(user_id, interaction)
     
     def score_recommendations(
         self,
         recommendations: List[Dict],
-        user_id: str = None
+        user_id: str = None,
+        past_interactions: List[Dict] = None
     ) -> List[Dict]:
         """
-        Score and re-rank recommendations based on user preferences
-        
+        Score and re-rank recommendations using hybrid system (RF + LLM + Vector)
+
         Args:
-            recommendations: List of recommendation dicts
+            recommendations: List of recommendation dicts with allocation strategies
             user_id: Optional user ID for personalization
-        
+            past_interactions: Optional list of past user interactions for profile building
+
         Returns:
-            Recommendations ranked by preference
+            Recommendations ranked by preference score with explanations
+            Each recommendation has:
+                - preference_score: Combined hybrid score (0-1)
+                - score_breakdown: Dict with RF/LLM/Vector scores and weights
+                - llm_explanation: Natural language explanation (if LLM enabled)
         """
-        # Get user profile if available
+        if not user_id:
+            # Without user_id, use basic RF scoring
+            return self.preference_learner.score_recommendations(
+                recommendations=recommendations
+            )
+
+        # Build enhanced user profile with LLM insights
         user_profile = None
-        if user_id:
-            # Load from database
-            pass
-        
-        return self.preference_learner.score_recommendations(
+        if past_interactions:
+            user_profile = self.preference_learner.get_user_profile_enhanced(
+                user_id,
+                past_interactions
+            )
+
+        # Use hybrid scoring (40% RF + 30% LLM + 30% Vector)
+        return self.preference_learner.score_recommendations_hybrid(
+            user_id=user_id,
             recommendations=recommendations,
             user_profile=user_profile
         )
@@ -384,12 +495,22 @@ class MLCore:
         interactions: List[Dict]
     ) -> Dict:
         """
-        Get comprehensive user preference profile
-        
+        Get comprehensive user preference profile with LLM insights
+
+        Args:
+            user_id: User identifier
+            interactions: List of past user interactions
+
         Returns:
-            Dict with preference weights and insights
+            Dict with:
+                - preference_type: Detected preference type (cost-conscious, coverage-focused, etc.)
+                - preference_weights: Learned weights for cost/speed/coverage
+                - llm_insights: Deep analysis from Llama 3.3 70B (if enabled)
+                - key_patterns: List of behavioral patterns
+                - confidence: Confidence in preference assessment (0-1)
+                - vector_db_count: Number of interactions in vector store
         """
-        return self.preference_learner.get_user_profile(user_id, interactions)
+        return self.preference_learner.get_user_profile_enhanced(user_id, interactions)
     
     # ============================================
     # UTILITY FUNCTIONS
