@@ -85,7 +85,13 @@ class DataLoader:
     def get_hospitals(self) -> pd.DataFrame:
         """Fetch all hospitals"""
         response = self.client.table("hospitals").select("*").execute()
-        return pd.DataFrame(response.data)
+        df = pd.DataFrame(response.data)
+        
+        # Rename 'id' to 'hospital_id' for consistency with other tables
+        if not df.empty and 'id' in df.columns:
+            df = df.rename(columns={'id': 'hospital_id'})
+        
+        return df
     
     def get_resource_types(self) -> pd.DataFrame:
         """Fetch resource types with mapping"""
@@ -165,7 +171,42 @@ class DataLoader:
         response = self.client.table("resource_inventory").select(
             "*, hospitals(name, region, capacity_beds), resource_types(name, critical_threshold)"
         ).execute()
-        return pd.DataFrame(response.data)
+        df = pd.DataFrame(response.data)
+        
+        # Flatten nested data from Supabase joins
+        if not df.empty:
+            # Extract resource_types.name -> resource_type column
+            if 'resource_types' in df.columns:
+                resource_types_dict = df['resource_types'].apply(lambda x: x if isinstance(x, dict) else {})
+                df['resource_type'] = resource_types_dict.apply(lambda x: x.get('name', ''))
+                # Extract critical_threshold
+                df['critical_threshold'] = resource_types_dict.apply(lambda x: x.get('critical_threshold', 0))
+            
+            # Extract hospitals data
+            if 'hospitals' in df.columns:
+                hospitals_dict = df['hospitals'].apply(lambda x: x if isinstance(x, dict) else {})
+                df['hospital_name'] = hospitals_dict.apply(lambda x: x.get('name', ''))
+                df['region'] = hospitals_dict.apply(lambda x: x.get('region', ''))
+                df['capacity_beds'] = hospitals_dict.apply(lambda x: x.get('capacity_beds', 0))
+                # If region column doesn't exist from flatten, use from hospitals
+                if 'region' not in df.columns:
+                    df['region'] = hospitals_dict.apply(lambda x: x.get('region', ''))
+            
+            # Calculate capacity: for beds use capacity_beds, for others use a default based on quantity
+            # This is a heuristic - in production you might want resource-specific capacity storage
+            if 'capacity_beds' in df.columns and 'resource_type' in df.columns:
+                df['capacity'] = df.apply(
+                    lambda row: row['capacity_beds'] if row['resource_type'] == 'beds' 
+                    else max(row['quantity'] * 3, 100),  # Default: 3x current quantity or 100, whichever is larger
+                    axis=1
+                )
+            elif 'capacity_beds' in df.columns:
+                df['capacity'] = df['capacity_beds']
+            else:
+                # Fallback: use a default capacity
+                df['capacity'] = 100
+        
+        return df
     
     def get_events(
         self,
