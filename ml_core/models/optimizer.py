@@ -91,6 +91,12 @@ class ResourceOptimizer:
         
         # Decision variables: x[i,j] = quantity to transfer from surplus i to shortage j
         transfers = {}
+        skipped_same_hospital = 0
+        skipped_distance = 0
+        skipped_zero_quantity = 0
+        
+        print(f"[Optimizer] Creating transfer variables: {len(surplus_hospitals)} surplus × {len(shortage_hospitals)} shortage = {len(surplus_hospitals) * len(shortage_hospitals)} potential pairs")
+        
         for i, surplus in surplus_hospitals.iterrows():
             for j, shortage in shortage_hospitals.iterrows():
                 surplus_id = surplus['hospital_id']
@@ -98,6 +104,7 @@ class ResourceOptimizer:
                 
                 # Skip if same hospital
                 if surplus_id == shortage_id:
+                    skipped_same_hospital += 1
                     continue
                 
                 # Get distance
@@ -109,6 +116,7 @@ class ResourceOptimizer:
                 
                 # Skip if too far
                 if distance > self.config['max_transfer_distance_km']:
+                    skipped_distance += 1
                     continue
                 
                 # Create variable
@@ -125,12 +133,17 @@ class ResourceOptimizer:
                         'distance': distance,
                         'max_quantity': max_transfer
                     }
+                else:
+                    skipped_zero_quantity += 1
+        
+        print(f"[Optimizer] Created {len(transfers)} transfer variables")
+        print(f"[Optimizer] Skipped: {skipped_same_hospital} same hospital, {skipped_distance} distance, {skipped_zero_quantity} zero quantity")
         
         if not transfers:
             return {
                 'status': 'no_feasible_transfers',
                 'resource_type': resource_type,
-                'message': 'No surplus hospitals within range of shortage hospitals',
+                'message': f'No feasible transfers found. Skipped: {skipped_same_hospital} same hospital, {skipped_distance} distance > {self.config["max_transfer_distance_km"]}km, {skipped_zero_quantity} zero quantity',
                 'allocations': []
             }
         

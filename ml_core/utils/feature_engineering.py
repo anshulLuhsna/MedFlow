@@ -87,12 +87,26 @@ def engineer_shortage_features(
     features = features.merge(recent_consumption, on='hospital_id', how='left')
     
     # Hospital capacity features
-    features = features.merge(
-        hospital_info[['id', 'capacity_beds', 'region']],
-        left_on='hospital_id',
-        right_on='id',
-        how='left'
-    )
+    # Handle both 'id' and 'hospital_id' column names
+    hospital_cols = ['capacity_beds', 'region']
+    if 'id' in hospital_info.columns:
+        hospital_cols = ['id'] + hospital_cols
+        merge_key = 'id'
+    elif 'hospital_id' in hospital_info.columns:
+        merge_key = 'hospital_id'
+    else:
+        # If neither exists, try to use the first column as merge key
+        merge_key = hospital_info.columns[0] if len(hospital_info.columns) > 0 else None
+        if merge_key:
+            hospital_cols = [merge_key] + hospital_cols
+    
+    if merge_key:
+        features = features.merge(
+            hospital_info[hospital_cols],
+            left_on='hospital_id',
+            right_on=merge_key,
+            how='left'
+        )
     features['capacity_utilization'] = features['avg_admissions'] / features['capacity_beds']
     
     # Stock/demand ratio

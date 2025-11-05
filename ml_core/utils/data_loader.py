@@ -82,10 +82,29 @@ class DataLoader:
         
         return all_data
     
-    def get_hospitals(self) -> pd.DataFrame:
-        """Fetch all hospitals"""
-        response = self.client.table("hospitals").select("*").execute()
-        df = pd.DataFrame(response.data)
+    def get_hospitals(self, limit: int = None) -> pd.DataFrame:
+        """
+        Fetch hospitals with optional limit
+        
+        Args:
+            limit: Optional limit on number of hospitals to fetch (max 100)
+        
+        Returns:
+            DataFrame with hospital data
+        """
+        query = self.client.table("hospitals").select("*")
+        
+        # Apply limit if provided
+        if limit is not None:
+            if limit < 1 or limit > 100:
+                raise ValueError("limit must be between 1 and 100")
+            query = query.limit(limit)
+            response = query.execute()
+            df = pd.DataFrame(response.data)
+        else:
+            # Fetch all hospitals (with pagination)
+            all_data = self._fetch_all_pages(query, "hospitals", verbose=False)
+            df = pd.DataFrame(all_data)
         
         # Rename 'id' to 'hospital_id' for consistency with other tables
         if not df.empty and 'id' in df.columns:
@@ -125,10 +144,40 @@ class DataLoader:
         
         # Use pagination to fetch all records
         all_data = self._fetch_all_pages(query, "inventory_history", verbose=verbose)
+        
+        # Handle empty result
+        if not all_data:
+            # Return empty DataFrame with expected columns structure
+            # This allows the caller to handle "no data" case gracefully
+            df = pd.DataFrame(columns=['date', 'hospital_id', 'resource_type_id', 'quantity', 
+                                      'consumption', 'resupply'])
+            df['date'] = pd.to_datetime([])
+            return df
+        
         df = pd.DataFrame(all_data)
         
-        if not df.empty:
+        # Ensure date column exists and is datetime
+        if 'date' in df.columns:
             df['date'] = pd.to_datetime(df['date'])
+        elif not df.empty:
+            # If DataFrame has data but no 'date' column, check for alternative names
+            date_cols = [col for col in df.columns if 'date' in col.lower()]
+            if date_cols:
+                # Rename the first date-like column to 'date'
+                df = df.rename(columns={date_cols[0]: 'date'})
+                df['date'] = pd.to_datetime(df['date'])
+            else:
+                # Create a date column from index or use current date
+                if 'created_at' in df.columns:
+                    df['date'] = pd.to_datetime(df['created_at'])
+                elif 'updated_at' in df.columns:
+                    df['date'] = pd.to_datetime(df['updated_at'])
+                else:
+                    # If no date column at all, we can't proceed
+                    raise ValueError(
+                        f"inventory_history query returned data without 'date' column. "
+                        f"Available columns: {df.columns.tolist()}"
+                    )
         
         return df
     
@@ -211,15 +260,56 @@ class DataLoader:
     def get_events(
         self,
         start_date: str = None,
-        end_date: str = None
+        end_date: str = None,
+        event_type: str = None,
+        severity: str = None,
+        region: str = None,
+        active_only: bool = False,
+        limit: int = None
     ) -> pd.DataFrame:
-        """Fetch events (outbreaks, disruptions)"""
+        """
+        Fetch events (outbreaks, disruptions) with optional filters
+        
+        Args:
+            start_date: ISO date string - filter events starting on/after this date
+            end_date: ISO date string - filter events ending on/before this date
+            event_type: Filter by type (outbreak, supply_disruption)
+            severity: Filter by severity (low, medium, high, critical)
+            region: Filter by affected region
+            active_only: Only return events where current date is between start_date and end_date
+            limit: Limit number of results (1-100)
+        
+        Returns:
+            DataFrame with event data
+        """
+        from datetime import datetime
+        
         query = self.client.table("events").select("*")
         
         if start_date:
             query = query.gte("start_date", start_date)
         if end_date:
             query = query.lte("end_date", end_date)
+        if event_type:
+            query = query.eq("event_type", event_type)
+        if severity:
+            query = query.eq("severity", severity)
+        if region:
+            # Note: affected_region is stored as comma-separated string, so we use ilike for partial match
+            query = query.ilike("affected_region", f"%{region}%")
+        
+        # Active only: current date must be between start_date and end_date
+        # Note: We need to filter after fetching since Supabase doesn't support complex date comparisons
+        # For now, we'll fetch all and filter in Python
+        if active_only:
+            # We'll filter after fetching since we need to check if today is between start_date and end_date
+            pass  # Will filter after query execution
+        
+        # Apply limit if specified
+        if limit is not None:
+            if limit < 1 or limit > 100:
+                raise ValueError("limit must be between 1 and 100")
+            query = query.limit(limit)
         
         response = query.execute()
         df = pd.DataFrame(response.data)
@@ -227,6 +317,14 @@ class DataLoader:
         if not df.empty:
             df['start_date'] = pd.to_datetime(df['start_date'])
             df['end_date'] = pd.to_datetime(df['end_date'])
+            
+            # Filter for active events: current date must be between start_date and end_date
+            if active_only:
+                today = pd.Timestamp.now().date()
+                df = df[
+                    (df['start_date'].dt.date <= today) & 
+                    ((df['end_date'].isna()) | (df['end_date'].dt.date >= today))
+                ].copy()
         
         return df
     

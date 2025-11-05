@@ -627,20 +627,87 @@ class DemandForecaster:
         
         Args:
             hospital_id: Hospital UUID
-            historical_data: DataFrame with columns [date, quantity, consumption, admissions]
+            historical_data: DataFrame with columns [date, quantity, consumption, resupply, total_admissions]
             days_ahead: Number of days to forecast
         
         Returns:
             Dict with predictions and metadata
         """
-        # Prepare sequence
-        data = historical_data.sort_values('date').tail(self.config['sequence_length'])
+        # Ensure date is datetime for sorting
+        if 'date' not in historical_data.columns:
+            raise ValueError("historical_data must contain 'date' column")
+        
+        # Ensure resupply column exists (fill with 0 if missing)
+        if 'resupply' not in historical_data.columns:
+            historical_data['resupply'] = 0
+        
+        # Ensure total_admissions column exists (fill with 0 if missing)
+        if 'total_admissions' not in historical_data.columns:
+            historical_data['total_admissions'] = 0
+        
+        # Sort by date and get last sequence_length days
+        data = historical_data.sort_values('date').copy()
+        data = data.tail(self.config['sequence_length'])
         
         if len(data) < self.config['sequence_length']:
             raise ValueError(f"Need at least {self.config['sequence_length']} days of history")
         
-        features = data[['quantity', 'consumption', 'resupply', 'total_admissions']].fillna(0).values
-        X = features[np.newaxis, :, :]  # Add batch dimension
+        # Engineer all 17 features (same as training)
+        from ..utils.feature_engineering import calculate_trend
+        
+        # Calculate rolling means for quantity (7-day and 14-day)
+        data['quantity_ma_7d'] = data['quantity'].rolling(window=7, min_periods=1).mean()
+        data['quantity_ma_14d'] = data['quantity'].rolling(window=14, min_periods=1).mean()
+        
+        # Calculate trend (slope over last 14 days)
+        data['quantity_trend'] = calculate_trend(data['quantity'], window=14)
+        data['consumption_trend'] = calculate_trend(data['consumption'], window=14)
+        
+        # Add rate of change features
+        data['quantity_change'] = data['quantity'].diff().fillna(0)
+        data['consumption_change'] = data['consumption'].diff().fillna(0)
+        
+        # Add relative features (normalized by admissions)
+        data['quantity_per_admission'] = data['quantity'] / (data['total_admissions'] + 1)
+        data['consumption_rate'] = data['consumption'] / (data['total_admissions'] + 1)
+        
+        # Momentum features (2nd derivative - acceleration)
+        data['quantity_momentum'] = data['quantity_change'].diff().fillna(0)
+        data['consumption_momentum'] = data['consumption_change'].diff().fillna(0)
+        
+        # Percentage change features
+        data['quantity_pct_change'] = data['quantity'].pct_change().fillna(0).replace([np.inf, -np.inf], 0)
+        data['consumption_pct_change'] = data['consumption'].pct_change().fillna(0).replace([np.inf, -np.inf], 0)
+        
+        # Trend direction indicator (-1, 0, or 1)
+        data['trend_direction'] = np.sign(data['quantity_trend']).fillna(0)
+        
+        # Extract all 17 features in the correct order
+        feature_cols = [
+            # Base features (4)
+            'quantity', 'consumption', 'resupply', 'total_admissions',
+            # Trend features (4)
+            'quantity_ma_7d', 'quantity_ma_14d', 'quantity_trend', 'consumption_trend',
+            # Change features (2)
+            'quantity_change', 'consumption_change',
+            # Normalized features (2)
+            'quantity_per_admission', 'consumption_rate',
+            # Momentum features (2)
+            'quantity_momentum', 'consumption_momentum',
+            # Percentage change features (2)
+            'quantity_pct_change', 'consumption_pct_change',
+            # Directional indicator (1)
+            'trend_direction'
+        ]
+        
+        # Ensure all columns exist (fill missing with 0)
+        for col in feature_cols:
+            if col not in data.columns:
+                data[col] = 0
+        
+        # Extract features and fill NaN values
+        features = data[feature_cols].fillna(0).astype(float).values
+        X = features[np.newaxis, :, :]  # Add batch dimension: (1, sequence_length, 17)
         
         # Predict
         predictions, lower, upper = self.predict(X, return_confidence=True)

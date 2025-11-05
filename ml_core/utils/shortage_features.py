@@ -64,7 +64,21 @@ def engineer_shortage_features(
         demand = demand_predictions[
             (demand_predictions['hospital_id'] == hospital_id) &
             (demand_predictions['resource_type'] == resource_type)
-        ].sort_values('day')
+        ]
+        
+        # Check if demand DataFrame is empty or missing 'day' column
+        if demand.empty:
+            # Skip this hospital-resource pair if no demand predictions
+            continue
+        
+        # Validate required columns
+        if 'day' not in demand.columns:
+            print(f"[Shortage Features] Warning: Missing 'day' column for hospital {hospital_id}, resource {resource_type}")
+            print(f"[Shortage Features] Available columns: {demand.columns.tolist()}")
+            continue
+        
+        # Sort by day
+        demand = demand.sort_values('day')
 
         # Get admissions for this hospital (last 30 days)
         hospital_admissions = admissions_history[
@@ -84,10 +98,17 @@ def engineer_shortage_features(
 
         hospital = hospital.iloc[0]
 
+        # Calculate predicted_demand_7d (sum of first 7 days)
+        predicted_demand_7d = demand['predicted_consumption'].iloc[:7].sum() if len(demand) >= 7 else demand['predicted_consumption'].sum()
+        
         # Extract features
         features = {
             'hospital_id': hospital_id,
             'resource_type': resource_type,
+            
+            # Required columns for shortage_detector.detect_shortages
+            'stock_level': row['quantity'],  # Current stock level
+            'predicted_demand_7d': predicted_demand_7d,  # 7-day predicted demand
 
             # Category 1: Stock-Demand Ratios (4 features)
             'stock_demand_ratio': calculate_stock_demand_ratio(row, demand, days=7),

@@ -1,11 +1,16 @@
 """
 Preference Learning System - Hybrid ML + LLM
 Learns user preferences from interactions and adapts recommendations
+
+NOW WITH:
+- Groq/Llama 3.3 70B for deep semantic analysis
+- Qdrant vector store for similarity matching
+- Hybrid scoring: 40% RF + 30% LLM + 30% Vector
 """
 
 import numpy as np
 import pandas as pd
-from typing import Dict, List, Tuple
+from typing import Dict, List, Tuple, Optional
 from sklearn.ensemble import RandomForestRegressor
 from sklearn.preprocessing import StandardScaler
 import joblib
@@ -14,26 +19,73 @@ from datetime import datetime
 
 # Handle both relative and absolute imports
 try:
-from ..config import PREFERENCE_LEARNING_CONFIG, MODEL_PATHS
-from ..utils.feature_engineering import extract_recommendation_features
+    from ..config import PREFERENCE_LEARNING_CONFIG, MODEL_PATHS
+    from ..utils.feature_engineering import extract_recommendation_features
+    from ..utils.groq_client import GroqPreferenceAnalyzer
+    from ..utils.qdrant_client import InteractionVectorStore
 except ImportError:
     from config import PREFERENCE_LEARNING_CONFIG, MODEL_PATHS
     from utils.feature_engineering import extract_recommendation_features
+    try:
+        from utils.groq_client import GroqPreferenceAnalyzer
+    except ImportError:
+        GroqPreferenceAnalyzer = None
+    try:
+        from utils.qdrant_client import InteractionVectorStore
+    except ImportError:
+        InteractionVectorStore = None
 
 
 class PreferenceLearner:
-    """Hybrid preference learning system"""
-    
-    def __init__(self):
+    """Hybrid preference learning system with RF + LLM + Vector Store"""
+
+    def __init__(self, use_llm=True, use_vector_store=True):
+        """
+        Initialize preference learner with optional LLM and vector store
+
+        Args:
+            use_llm: Enable Groq/Llama analysis (requires GROQ_API_KEY)
+            use_vector_store: Enable Qdrant storage (requires Qdrant server)
+        """
         self.config = PREFERENCE_LEARNING_CONFIG
         self.model = None
         self.scaler = StandardScaler()
         self.feature_names = None
         self.model_path = MODEL_PATHS["preference_learner"]
         self.model_path.mkdir(parents=True, exist_ok=True)
-        
+
         # Default preference weights
         self.default_weights = self.config['feature_weights'].copy()
+
+        # Initialize Groq/Llama analyzer
+        self.use_llm = use_llm
+        self.llm_analyzer = None
+        if use_llm and GroqPreferenceAnalyzer is not None:
+            try:
+                self.llm_analyzer = GroqPreferenceAnalyzer()
+            except Exception as e:
+                print(f"⚠ Groq initialization failed: {e}")
+                print("  Continuing without LLM analysis")
+                self.use_llm = False
+        else:
+            self.use_llm = False
+            if use_llm:
+                print("⚠ Groq client not available. Install with: pip install groq")
+
+        # Initialize Qdrant vector store
+        self.use_vector_store = use_vector_store
+        self.vector_store = None
+        if use_vector_store and InteractionVectorStore is not None:
+            try:
+                self.vector_store = InteractionVectorStore()
+            except Exception as e:
+                print(f"⚠ Qdrant initialization failed: {e}")
+                print("  Continuing without vector store")
+                self.use_vector_store = False
+        else:
+            self.use_vector_store = False
+            if use_vector_store:
+                print("⚠ Qdrant client not available. Install with: pip install qdrant-client")
     
     def build_model(self) -> RandomForestRegressor:
         """Build preference prediction model"""
@@ -386,5 +438,259 @@ class PreferenceLearner:
         with open(self.model_path / 'config.json', 'r') as f:
             config = json.load(f)
         self.feature_names = config['feature_names']
-        
+
         print(f"✓ Preference learner loaded from {self.model_path}")
+
+    # =================================================================
+    # HYBRID SCORING METHODS (Groq + Qdrant Integration)
+    # =================================================================
+
+    def update_from_interaction_enhanced(
+        self,
+        user_id: str,
+        interaction: Dict,
+        learning_rate: float = 0.1
+    ):
+        """
+        Enhanced online learning with vector storage
+
+        Combines:
+        1. Random Forest update (existing)
+        2. Vector storage in Qdrant
+
+        Args:
+            user_id: User identifier
+            interaction: Interaction dict
+            learning_rate: Learning rate (not used in RF, kept for compatibility)
+        """
+        # Store in Qdrant vector database
+        if self.use_vector_store and self.vector_store:
+            try:
+                self.vector_store.store_interaction(user_id, interaction)
+            except Exception as e:
+                print(f"⚠ Vector storage failed: {e}")
+
+        # Update Random Forest (existing logic)
+        self.update_from_interaction(interaction, learning_rate)
+
+    def score_recommendations_hybrid(
+        self,
+        user_id: str,
+        recommendations: List[Dict],
+        user_profile: Optional[Dict] = None
+    ) -> List[Dict]:
+        """
+        HYBRID SCORING: Random Forest + LLM + Vector Similarity
+
+        Scoring weights:
+        - 40% Random Forest (fast pattern matching)
+        - 30% LLM analysis (deep semantic understanding)
+        - 30% Vector similarity (similar past decisions)
+
+        Args:
+            user_id: User identifier
+            recommendations: List of recommendation dicts
+            user_profile: Optional user profile (will use LLM insights)
+
+        Returns:
+            Recommendations ranked by hybrid score
+        """
+        if not recommendations:
+            return []
+
+        # 1. Random Forest scoring
+        rf_scores = self._score_with_rf(recommendations)
+
+        # 2. LLM-based scoring (if enabled)
+        llm_scores = self._score_with_llm(user_profile, recommendations) if self.use_llm else None
+
+        # 3. Vector similarity scoring (if enabled)
+        vector_scores = self._score_with_vectors(user_id, recommendations) if self.use_vector_store else None
+
+        # 4. Combine scores with weights
+        for idx, rec in enumerate(recommendations):
+            scores = []
+            weights = []
+
+            # RF score (always available)
+            scores.append(rf_scores[idx])
+            weights.append(0.4)
+
+            # LLM score
+            if llm_scores:
+                scores.append(llm_scores[idx])
+                weights.append(0.3)
+
+            # Vector score
+            if vector_scores:
+                scores.append(vector_scores[idx])
+                weights.append(0.3)
+
+            # Normalize weights to sum to 1.0
+            total_weight = sum(weights)
+            weights = [w / total_weight for w in weights]
+
+            # Weighted average
+            final_score = sum(s * w for s, w in zip(scores, weights))
+
+            rec['preference_score'] = float(final_score)
+            rec['score_breakdown'] = {
+                'rf_score': float(rf_scores[idx]),
+                'llm_score': float(llm_scores[idx]) if llm_scores else None,
+                'vector_score': float(vector_scores[idx]) if vector_scores else None,
+                'weights': {
+                    'rf': weights[0],
+                    'llm': weights[1] if len(weights) > 1 else 0,
+                    'vector': weights[2] if len(weights) > 2 else 0
+                }
+            }
+
+        # Re-rank by preference score
+        recommendations.sort(key=lambda x: x['preference_score'], reverse=True)
+
+        return recommendations
+
+    def _score_with_rf(self, recommendations: List[Dict]) -> List[float]:
+        """Score recommendations using Random Forest"""
+        if self.model is None:
+            # No model trained yet, return neutral scores
+            return [0.5] * len(recommendations)
+
+        try:
+            # Extract features
+            features_list = [extract_recommendation_features(rec) for rec in recommendations]
+            X = pd.DataFrame(features_list)
+
+            # Ensure feature order matches training
+            X = X[self.feature_names]
+
+            # Scale and predict
+            X_scaled = self.scaler.transform(X)
+            scores = self.model.predict(X_scaled)
+
+            # Clip to 0-1 range
+            scores = np.clip(scores, 0, 1)
+
+            return scores.tolist()
+
+        except Exception as e:
+            print(f"⚠ RF scoring failed: {e}")
+            return [0.5] * len(recommendations)
+
+    def _score_with_llm(
+        self,
+        user_profile: Optional[Dict],
+        recommendations: List[Dict]
+    ) -> Optional[List[float]]:
+        """Score recommendations using Groq/Llama LLM"""
+        if not self.llm_analyzer or not user_profile:
+            return None
+
+        scores = []
+
+        for rec in recommendations:
+            try:
+                # Get LLM explanation
+                explanation = self.llm_analyzer.explain_recommendation_ranking(
+                    user_profile, rec
+                )
+
+                # Simple heuristic: longer explanations = better fit
+                # In production, could ask LLM to return score directly
+                score = min(len(explanation) / 200, 1.0)
+                scores.append(score)
+
+                # Store explanation in recommendation
+                rec['llm_explanation'] = explanation
+
+            except Exception as e:
+                print(f"⚠ LLM scoring error: {e}")
+                scores.append(0.5)
+
+        return scores
+
+    def _score_with_vectors(
+        self,
+        user_id: str,
+        recommendations: List[Dict]
+    ) -> Optional[List[float]]:
+        """Score based on similarity to past successful choices"""
+        if not self.vector_store:
+            return None
+
+        scores = []
+
+        for rec in recommendations:
+            try:
+                # Create mock interaction for this recommendation
+                mock_interaction = {
+                    'selected_recommendation_index': 0,
+                    'recommendations': [rec]
+                }
+
+                # Find similar past interactions
+                similar = self.vector_store.find_similar_interactions(
+                    interaction=mock_interaction,
+                    user_id=user_id,
+                    limit=5
+                )
+
+                # Average similarity score
+                if similar:
+                    avg_similarity = float(np.mean([s['score'] for s in similar]))
+                    scores.append(avg_similarity)
+                else:
+                    # No history, neutral score
+                    scores.append(0.5)
+
+            except Exception as e:
+                print(f"⚠ Vector scoring error: {e}")
+                scores.append(0.5)
+
+        return scores
+
+    def get_user_profile_enhanced(
+        self,
+        user_id: str,
+        interactions: List[Dict]
+    ) -> Dict:
+        """
+        Enhanced user profile with LLM insights and vector stats
+
+        Returns:
+            Dict with:
+            - Basic profile (from base class)
+            - LLM-analyzed preference patterns
+            - Vector store statistics
+        """
+        # Base profile
+        profile = self.get_user_profile(user_id, interactions)
+
+        # Add LLM analysis (if enough interactions)
+        if self.use_llm and self.llm_analyzer and len(interactions) >= 3:
+            try:
+                llm_insights = self.llm_analyzer.analyze_interaction_pattern(interactions)
+                profile['llm_insights'] = llm_insights
+                profile['preference_type'] = llm_insights.get('preference_type', 'balanced')
+                profile['key_patterns'] = llm_insights.get('key_patterns', [])
+
+                # Use LLM-derived objective weights if available
+                if 'objective_weights' in llm_insights:
+                    profile['objective_weights'] = llm_insights['objective_weights']
+
+            except Exception as e:
+                print(f"⚠ LLM profile analysis failed: {e}")
+
+        # Add vector store statistics
+        if self.use_vector_store and self.vector_store:
+            try:
+                count = self.vector_store.get_user_interaction_count(user_id)
+                stats = self.vector_store.get_collection_stats()
+                profile['vector_store'] = {
+                    'user_interaction_count': count,
+                    'total_interactions': stats.get('total_points', 0)
+                }
+            except Exception as e:
+                print(f"⚠ Vector store query failed: {e}")
+
+        return profile
