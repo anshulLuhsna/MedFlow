@@ -852,4 +852,178 @@ For detailed implementation status, see [`docs/PHASE_4_COMPLETE.md`](docs/PHASE_
 
 ---
 
+## Streamlit Dashboard (Web UI)
+
+### Overview
+The MedFlow Streamlit Dashboard provides a **web-based user interface** for running the complete 7-agent workflow. Built with **Streamlit**, it offers an intuitive, interactive way to configure and execute resource allocation workflows without using the command line.
+
+**Status:** ✅ Phase 5 Complete - Production Ready
+
+### Features
+
+- **Interactive Workflow Execution**: Run the full 7-agent workflow through a web interface
+- **Real-time Progress**: See workflow progress as it executes
+- **Human-in-the-Loop**: Review and select strategies through the UI
+- **Configuration**: Easy-to-use sidebar for configuring workflow parameters
+- **Results Display**: Beautiful visualization of final recommendations
+
+### Architecture
+
+**Tech Stack:**
+- **Framework:** Streamlit 1.39.0+
+- **Workflow Engine:** LangGraph (same as CLI)
+- **State Management:** Session state for workflow persistence
+- **UI Components:** Streamlit widgets (forms, tables, buttons)
+
+**Project Structure:**
+```
+dashboard/
+├── app.py              # Main Streamlit application
+├── README.md           # Dashboard documentation
+└── run.sh              # Convenience script for running
+```
+
+### Quick Start
+
+**1. Install Dependencies:**
+```bash
+pip install streamlit>=1.39.0
+# Or install all requirements
+pip install -r requirements.txt
+```
+
+**2. Start Backend Server:**
+```bash
+cd backend
+uvicorn app.main:app --reload --port 8000
+```
+
+**3. Run the Dashboard:**
+
+**Method 1: Using the run script (Recommended)**
+```bash
+cd /home/anshul/Desktop/MedFlow
+chmod +x dashboard/run.sh
+./dashboard/run.sh
+```
+
+**Method 2: Run from project root**
+```bash
+cd /home/anshul/Desktop/MedFlow
+export PYTHONPATH="${PWD}:${PYTHONPATH}"
+export STREAMLIT_RUNNING=true
+streamlit run dashboard/app.py --server.port 8501
+```
+
+**Method 3: Using Python directly**
+```bash
+cd /home/anshul/Desktop/MedFlow
+python3 -m streamlit run dashboard/app.py --server.port 8501
+```
+
+**4. Access the Dashboard:**
+- Open your browser to `http://localhost:8501`
+
+### Usage
+
+**Configuration (Sidebar):**
+- **Resource Type**: Choose from ventilators, ppe, o2_cylinders, beds, medications
+- **User ID**: Your user ID for preference learning (default: "default_user")
+- **Hospital IDs**: Optional comma-separated list of hospital IDs to process
+- **Outbreak ID**: Optional outbreak ID to simulate realistic scenarios
+
+**Workflow Steps:**
+1. Click **"Run Workflow"** to start the process
+2. Wait for the workflow to complete (may take a few minutes)
+3. When AI recommendations are ready, review the strategies
+4. Select your preferred strategy
+5. Optionally provide feedback
+6. Click **"Submit Selection"** to complete the workflow
+
+**Workflow Nodes:**
+1. **Data Analyst** - Assesses current shortages and outbreaks
+2. **Forecasting** - Predicts 14-day demand for at-risk hospitals
+3. **Optimization** - Generates multiple allocation strategies
+4. **Preference** - Ranks strategies by your preferences
+5. **Reasoning** - Generates AI explanation
+6. **Human Review** - You review and select a strategy
+7. **Feedback** - System learns from your decision
+
+### Features
+
+**Interactive Strategy Selection:**
+- View all 3 strategies in a table format
+- See key metrics: Cost, Hospitals Helped, Shortage Reduction, Preference Score
+- Read AI-generated explanation for each recommendation
+- Select strategy using radio buttons
+- Provide optional feedback
+
+**Results Display:**
+- Final recommendation summary
+- Execution time tracking
+- Detailed metrics (hospitals helped, total cost, shortage reduction)
+- Workflow summary expandable section
+
+**Session Management:**
+- Session state preserved across page refreshes
+- Reset button to start fresh
+- Error handling with clear error messages
+
+### Technical Details
+
+**Workflow Execution:**
+- Uses `invoke()` method (synchronous) like CLI
+- Human review node detects Streamlit mode and returns early
+- No blocking `input()` calls - all interaction through Streamlit widgets
+- Session state management for workflow persistence
+
+**Path Resolution:**
+- Automatically resolves project root path
+- Handles imports correctly regardless of execution directory
+- Sets `PYTHONPATH` and `STREAMLIT_RUNNING` environment variables
+
+**Error Handling:**
+- Graceful error messages displayed to user
+- Detailed logging for debugging
+- Workflow state preserved on errors
+
+### Comparison: CLI vs Dashboard
+
+| Feature | CLI | Dashboard |
+|---------|-----|-----------|
+| **Interface** | Command line | Web UI |
+| **Configuration** | Command-line flags | Sidebar form |
+| **Human Review** | Terminal input | Interactive UI |
+| **Results Display** | Terminal output | Rich visualizations |
+| **State Persistence** | Checkpoint DB | Session state |
+| **Best For** | Automation, scripts | Interactive use, demos |
+
+### Troubleshooting
+
+**Import Errors:**
+- Ensure you're running from project root, not from `dashboard/` directory
+- Check that `PYTHONPATH` includes project root
+- Verify `agents/` module exists in project root
+
+**Workflow Stuck:**
+- Check that backend is running on `http://localhost:8000`
+- Check Streamlit logs for errors
+- Try reducing number of hospitals using `DEMO_HOSPITAL_LIMIT` environment variable
+
+**Human Review Not Showing:**
+- The workflow should automatically pause at human review step
+- Check workflow state in logs
+- Try resetting and running again
+
+**Environment Variables:**
+- Ensure `.env` file is in project root
+- Set `STREAMLIT_RUNNING=true` (automatically set by `run.sh`)
+- All required API keys should be in `.env` file
+
+### Documentation
+
+For detailed dashboard documentation, see [`dashboard/README.md`](dashboard/README.md).
+
+---
+
 
