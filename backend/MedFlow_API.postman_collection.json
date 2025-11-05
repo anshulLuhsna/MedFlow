@@ -1,0 +1,1170 @@
+{
+	"info": {
+		"_postman_id": "medflow-api-collection",
+		"name": "MedFlow API",
+		"description": "Complete API collection for MedFlow medical resource allocation system.\n\n## Authentication\nAll endpoints (except health checks) require an API key in the header:\n```\nX-API-Key: dev-key-123\n```\n\n## Base URL\n```\nhttp://localhost:8000\n```\n\n## Quick Start\n1. Import this collection into Postman\n2. Import the environment file (if provided)\n3. Start with health checks to verify the server is running\n4. Test prediction endpoints with sample data\n\n## Documentation\n- Interactive Docs: http://localhost:8000/docs\n- Full README: backend/README.md",
+		"schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+	},
+	"item": [
+		{
+			"name": "Health Checks",
+			"item": [
+				{
+					"name": "Basic Health Check",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Status code is 200\", function () {",
+									"    pm.response.to.have.status(200);",
+									"});",
+									"",
+									"pm.test(\"Status is healthy\", function () {",
+									"    var jsonData = pm.response.json();",
+									"    pm.expect(jsonData.status).to.eql(\"healthy\");",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/health",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"health"
+							]
+						},
+						"description": "Basic health check endpoint. No authentication required.\n\nReturns:\n- status: \"healthy\"\n- timestamp: ISO timestamp\n- version: API version"
+					},
+					"response": []
+				},
+				{
+					"name": "ML Models Health Check",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Status code is 200 or 503\", function () {",
+									"    pm.expect(pm.response.code).to.be.oneOf([200, 503]);",
+									"});",
+									"",
+									"if (pm.response.code === 200) {",
+									"    pm.test(\"Models are loaded\", function () {",
+									"        var jsonData = pm.response.json();",
+									"        pm.expect(jsonData.models_loaded).to.eql(true);",
+									"        pm.expect(jsonData.available_resources).to.be.an('array');",
+									"    });",
+									"}"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/health/ml",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"health",
+								"ml"
+							]
+						},
+						"description": "Check ML models status. No authentication required.\n\nReturns:\n- status: \"healthy\" or \"unhealthy\"\n- models_loaded: boolean\n- available_resources: list of resource types\n- timestamp: ISO timestamp\n\nResource types:\n- ppe\n- o2_cylinders\n- ventilators\n- medications\n- beds"
+					},
+					"response": []
+				}
+			],
+			"description": "Health check endpoints to verify API and ML models status"
+		},
+		{
+			"name": "Predictions",
+			"item": [
+				{
+					"name": "Predict Demand",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Status code is 200 or 503\", function () {",
+									"    pm.expect(pm.response.code).to.be.oneOf([200, 503]);",
+									"});",
+									"",
+									"if (pm.response.code === 200) {",
+									"    pm.test(\"Response has predictions\", function () {",
+									"        var jsonData = pm.response.json();",
+									"        pm.expect(jsonData).to.have.property('predictions');",
+									"        pm.expect(jsonData).to.have.property('hospital_id');",
+									"        pm.expect(jsonData).to.have.property('resource_type');",
+									"    });",
+									"}"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"auth": {
+							"type": "apikey",
+							"apikey": [
+								{
+									"key": "value",
+									"value": "{{api_key}}",
+									"type": "string"
+								},
+								{
+									"key": "key",
+									"value": "X-API-Key",
+									"type": "string"
+								}
+							]
+						},
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"hospital_id\": \"3f3e1a06-279a-4714-96ec-e03a47e25f7d\",\n    \"resource_type\": \"ppe\",\n    \"days_ahead\": 14\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/api/v1/predict/demand",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"v1",
+								"predict",
+								"demand"
+							]
+						},
+						"description": "Predict future resource demand for a specific hospital.\n\n**Requires Authentication**\n\nRequest Body:\n- hospital_id: Hospital identifier (e.g., \"3f3e1a06-279a-4714-96ec-e03a47e25f7d\")\n- resource_type: One of [ppe, o2_cylinders, ventilators, medications, beds]\n- days_ahead: Forecast horizon (1-14 days)\n\nReturns:\n- hospital_id: Hospital ID\n- resource_type: Resource type\n- predictions: Forecast data with confidence intervals\n- timestamp: ISO timestamp"
+					},
+					"response": []
+				},
+				{
+					"name": "Detect Shortages",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Status code is 200\", function () {",
+									"    pm.response.to.have.status(200);",
+									"});",
+									"",
+									"pm.test(\"Response has shortages array\", function () {",
+									"    var jsonData = pm.response.json();",
+									"    pm.expect(jsonData).to.have.property('shortages');",
+									"    pm.expect(jsonData.shortages).to.be.an('array');",
+									"    pm.expect(jsonData).to.have.property('count');",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"auth": {
+							"type": "apikey",
+							"apikey": [
+								{
+									"key": "value",
+									"value": "{{api_key}}",
+									"type": "string"
+								},
+								{
+									"key": "key",
+									"value": "X-API-Key",
+									"type": "string"
+								}
+							]
+						},
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/api/v1/shortages",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"v1",
+								"shortages"
+							],
+							"query": [
+								{
+									"key": "resource_type",
+									"value": "ppe",
+									"description": "Optional filter by resource type",
+									"disabled": true
+								},
+								{
+									"key": "limit",
+									"value": "10",
+									"description": "Optional limit on number of hospitals to process (1-100)",
+									"disabled": true
+								}
+							]
+						},
+						"description": "Detect shortage risks across all hospitals.\n\n**Requires Authentication**\n\nQuery Parameters (Optional):\n- resource_type: Filter by specific resource type\n- limit: Limit number of hospitals to process (1-100, default: all)\n\nReturns:\n- shortages: Array of hospitals with shortage risks\n- count: Number of shortages detected\n- summary: Aggregated statistics by risk level\n\nRisk Levels:\n- critical: Immediate action required\n- high: Action needed soon\n- medium: Monitor closely\n- low: Normal operations\n\nNote: Use `limit` parameter to reduce processing time for large datasets."
+					},
+					"response": []
+				},
+				{
+					"name": "Detect Shortages (Filtered)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Status code is 200\", function () {",
+									"    pm.response.to.have.status(200);",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"auth": {
+							"type": "apikey",
+							"apikey": [
+								{
+									"key": "value",
+									"value": "{{api_key}}",
+									"type": "string"
+								},
+								{
+									"key": "key",
+									"value": "X-API-Key",
+									"type": "string"
+								}
+							]
+						},
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/api/v1/shortages?resource_type=ppe",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"v1",
+								"shortages"
+							],
+							"query": [
+								{
+									"key": "resource_type",
+									"value": "ppe",
+									"description": "Filter by resource type"
+								},
+								{
+									"key": "limit",
+									"value": "10",
+									"description": "Limit number of hospitals to process (1-100)",
+									"disabled": true
+								}
+							]
+						},
+						"description": "Example of shortage detection filtered by resource type (PPE). Use `limit` parameter to reduce processing time."
+					},
+					"response": []
+				},
+				{
+					"name": "Optimize Allocation",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Status code is 200 or 400\", function () {",
+									"    pm.expect(pm.response.code).to.be.oneOf([200, 400]);",
+									"});",
+									"",
+									"if (pm.response.code === 200) {",
+									"    pm.test(\"Response has allocation data\", function () {",
+									"        var jsonData = pm.response.json();",
+									"        pm.expect(jsonData).to.have.property('status');",
+									"        pm.expect(jsonData).to.have.property('allocations');",
+									"        pm.expect(jsonData).to.have.property('summary');",
+									"    });",
+									"}"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"auth": {
+							"type": "apikey",
+							"apikey": [
+								{
+									"key": "value",
+									"value": "{{api_key}}",
+									"type": "string"
+								},
+								{
+									"key": "key",
+									"value": "X-API-Key",
+									"type": "string"
+								}
+							]
+						},
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"resource_type\": \"ppe\",\n    \"n_strategies\": 1,\n    \"limit\": 10\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/api/v1/optimize",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"v1",
+								"optimize"
+							]
+						},
+						"description": "Generate optimal resource allocation strategy.\n\n**Requires Authentication**\n\nRequest Body:\n- resource_type: Resource to allocate\n- n_strategies: Number of strategies (1-5)\n- shortage_hospital_ids: Optional list of hospitals (auto-detected if not provided)\n- limit: Optional limit on number of hospitals to process (1-100, default: all)\n\nReturns:\n- status: \"optimal\", \"feasible\", \"infeasible\", or \"no_feasible_transfers\"\n- resource_type: Resource type\n- allocations: List of transfer recommendations\n- summary: Total transfers, cost, hospitals helped\n- timestamp: ISO timestamp\n- shortage_count: Number of hospitals with shortages (when status is \"no_feasible_transfers\")\n- surplus_count: Number of hospitals with surplus (when status is \"no_feasible_transfers\")\n- diagnostics: Diagnostic information when status is \"no_feasible_transfers\"\n\nEach allocation includes:\n- from_hospital_id: Source hospital\n- to_hospital_id: Destination hospital\n- quantity: Units to transfer\n- cost: Transfer cost\n- distance_km: Distance in kilometers\n\nNote: Use `limit` parameter to reduce processing time. When status is \"no_feasible_transfers\", check diagnostics for detailed information about why no transfers were found."
+					},
+					"response": []
+				},
+				{
+					"name": "Generate Strategies",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Status code is 200\", function () {",
+									"    pm.response.to.have.status(200);",
+									"});",
+									"",
+									"pm.test(\"Response has strategies\", function () {",
+									"    var jsonData = pm.response.json();",
+									"    pm.expect(jsonData).to.have.property('strategies');",
+									"    pm.expect(jsonData.strategies).to.be.an('array');",
+									"    pm.expect(jsonData.strategies.length).to.be.at.most(3);",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"auth": {
+							"type": "apikey",
+							"apikey": [
+								{
+									"key": "value",
+									"value": "{{api_key}}",
+									"type": "string"
+								},
+								{
+									"key": "key",
+									"value": "X-API-Key",
+									"type": "string"
+								}
+							]
+						},
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"resource_type\": \"ppe\",\n    \"n_strategies\": 3,\n    \"limit\": 10\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/api/v1/strategies",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"v1",
+								"strategies"
+							]
+						},
+						"description": "Generate multiple allocation strategies with different objectives.\n\n**Requires Authentication**\n\nRequest Body:\n- resource_type: Resource to allocate\n- n_strategies: Number of strategies to generate (1-5)\n- limit: Optional limit on number of hospitals to process (1-100, default: all)\n\nReturns:\n- strategies: Array of ranked strategies\n- count: Number of strategies\n- resource_type: Resource type\n- timestamp: ISO timestamp\n\nStrategy Types:\n- Cost-Efficient: Minimize transfer costs\n- Maximum Coverage: Help maximum hospitals\n- Balanced: Trade-off between objectives\n\nEach strategy includes:\n- strategy_name: Strategy type\n- allocations: Transfer recommendations\n- summary: Total cost, transfers, hospitals helped\n- overall_score: Combined score (0-1)\n\nNote: Use `limit` parameter to reduce processing time for large datasets."
+					},
+					"response": []
+				}
+			],
+			"description": "ML prediction endpoints for demand forecasting, shortage detection, and optimization"
+		},
+		{
+			"name": "Preferences",
+			"item": [
+				{
+					"name": "Score Recommendations",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Status code is 200\", function () {",
+									"    pm.response.to.have.status(200);",
+									"});",
+									"",
+									"pm.test(\"Response has ranked strategies\", function () {",
+									"    var jsonData = pm.response.json();",
+									"    pm.expect(jsonData).to.have.property('ranked_strategies');",
+									"    pm.expect(jsonData.ranked_strategies).to.be.an('array');",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"auth": {
+							"type": "apikey",
+							"apikey": [
+								{
+									"key": "value",
+									"value": "{{api_key}}",
+									"type": "string"
+								},
+								{
+									"key": "key",
+									"value": "X-API-Key",
+									"type": "string"
+								}
+							]
+						},
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"user_id\": \"user_123\",\n    \"recommendations\": [\n        {\n            \"strategy_name\": \"Cost-Efficient\",\n            \"summary\": {\n                \"total_cost\": 1000,\n                \"hospitals_helped\": 5,\n                \"total_transfers\": 10\n            }\n        },\n        {\n            \"strategy_name\": \"Maximum Coverage\",\n            \"summary\": {\n                \"total_cost\": 2000,\n                \"hospitals_helped\": 10,\n                \"total_transfers\": 20\n            }\n        },\n        {\n            \"strategy_name\": \"Balanced\",\n            \"summary\": {\n                \"total_cost\": 1500,\n                \"hospitals_helped\": 8,\n                \"total_transfers\": 15\n            }\n        }\n    ],\n    \"past_interactions\": []\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/api/v1/preferences/score",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"v1",
+								"preferences",
+								"score"
+							]
+						},
+						"description": "Rank strategies by user preferences using hybrid AI (RF + LLM + Vector DB).\n\n**Requires Authentication**\n\nRequest Body:\n- user_id: User identifier\n- recommendations: Array of strategies to rank\n- past_interactions: Optional array of past user interactions\n\nReturns:\n- ranked_strategies: Recommendations sorted by preference score\n- count: Number of strategies\n- timestamp: ISO timestamp\n\nEach ranked strategy includes:\n- preference_score: Combined score (0-1)\n- score_breakdown: RF, LLM, and Vector scores\n- llm_explanation: Natural language explanation (if enabled)\n\nScoring System:\n- 40% Random Forest (pattern recognition)\n- 30% Groq/Llama 3.3 70B (semantic analysis)\n- 30% Qdrant Vector DB (similarity matching)"
+					},
+					"response": []
+				},
+				{
+					"name": "Update Preferences",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Status code is 200\", function () {",
+									"    pm.response.to.have.status(200);",
+									"});",
+									"",
+									"pm.test(\"Preferences updated\", function () {",
+									"    var jsonData = pm.response.json();",
+									"    pm.expect(jsonData.status).to.eql(\"updated\");",
+									"    pm.expect(jsonData).to.have.property('user_id');",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"auth": {
+							"type": "apikey",
+							"apikey": [
+								{
+									"key": "value",
+									"value": "{{api_key}}",
+									"type": "string"
+								},
+								{
+									"key": "key",
+									"value": "X-API-Key",
+									"type": "string"
+								}
+							]
+						},
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"user_id\": \"user_123\",\n    \"interaction\": {\n        \"selected_recommendation_index\": 0,\n        \"recommendations\": [\n            {\n                \"strategy_name\": \"Cost-Efficient\",\n                \"summary\": {\n                    \"total_cost\": 1000,\n                    \"hospitals_helped\": 5\n                }\n            }\n        ],\n        \"timestamp\": \"2025-11-04T10:00:00\"\n    }\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/api/v1/preferences/update",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"v1",
+								"preferences",
+								"update"
+							]
+						},
+						"description": "Update user preferences after they select a recommendation.\n\n**Requires Authentication**\n\nRequest Body:\n- user_id: User identifier\n- interaction: Interaction data object\n  - selected_recommendation_index: Index of chosen strategy (0-based)\n  - recommendations: List of recommendations shown\n  - timestamp: ISO timestamp of interaction\n\nReturns:\n- status: \"updated\"\n- user_id: User identifier\n- timestamp: ISO timestamp\n\nThis endpoint:\n1. Updates the Random Forest model with new training data\n2. Stores interaction embedding in Qdrant Vector DB\n3. Enables better personalization for future recommendations"
+					},
+					"response": []
+				}
+			],
+			"description": "Preference learning endpoints using hybrid AI for personalized recommendations"
+		},
+		{
+			"name": "Hospitals",
+			"item": [
+				{
+					"name": "Get All Hospitals",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Status code is 200\", function () {",
+									"    pm.response.to.have.status(200);",
+									"});",
+									"",
+									"pm.test(\"Response has hospitals array\", function () {",
+									"    var jsonData = pm.response.json();",
+									"    pm.expect(jsonData).to.have.property('hospitals');",
+									"    pm.expect(jsonData.hospitals).to.be.an('array');",
+									"    pm.expect(jsonData).to.have.property('count');",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"auth": {
+							"type": "apikey",
+							"apikey": [
+								{
+									"key": "value",
+									"value": "{{api_key}}",
+									"type": "string"
+								},
+								{
+									"key": "key",
+									"value": "X-API-Key",
+									"type": "string"
+								}
+							]
+						},
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/api/v1/hospitals",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"v1",
+								"hospitals"
+							],
+							"query": [
+								{
+									"key": "region",
+									"value": "North",
+									"description": "Optional filter by region",
+									"disabled": true
+								}
+							]
+						},
+						"description": "Get list of all hospitals.\n\n**Requires Authentication**\n\nQuery Parameters (Optional):\n- region: Filter hospitals by region\n\nReturns:\n- hospitals: Array of hospital objects\n- count: Number of hospitals\n\nEach hospital includes:\n- id: Hospital identifier\n- name: Hospital name\n- region: Geographic region\n- capacity: Bed capacity\n- location: Coordinates\n- contact: Contact information"
+					},
+					"response": []
+				},
+				{
+					"name": "Get All Hospitals (Filtered by Region)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Status code is 200\", function () {",
+									"    pm.response.to.have.status(200);",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"auth": {
+							"type": "apikey",
+							"apikey": [
+								{
+									"key": "value",
+									"value": "{{api_key}}",
+									"type": "string"
+								},
+								{
+									"key": "key",
+									"value": "X-API-Key",
+									"type": "string"
+								}
+							]
+						},
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/api/v1/hospitals?region=North",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"v1",
+								"hospitals"
+							],
+							"query": [
+								{
+									"key": "region",
+									"value": "North",
+									"description": "Filter by region"
+								}
+							]
+						},
+						"description": "Example of getting hospitals filtered by region."
+					},
+					"response": []
+				},
+				{
+					"name": "Get Hospital by ID",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Status code is 200 or 404\", function () {",
+									"    pm.expect(pm.response.code).to.be.oneOf([200, 404]);",
+									"});",
+									"",
+									"if (pm.response.code === 200) {",
+									"    pm.test(\"Response has hospital data\", function () {",
+									"        var jsonData = pm.response.json();",
+									"        pm.expect(jsonData).to.have.property('hospital');",
+									"        pm.expect(jsonData.hospital).to.be.an('object');",
+									"    });",
+									"}"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"auth": {
+							"type": "apikey",
+							"apikey": [
+								{
+									"key": "value",
+									"value": "{{api_key}}",
+									"type": "string"
+								},
+								{
+									"key": "key",
+									"value": "X-API-Key",
+									"type": "string"
+								}
+							]
+						},
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/api/v1/hospitals/3f3e1a06-279a-4714-96ec-e03a47e25f7d",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"v1",
+								"hospitals",
+								"3f3e1a06-279a-4714-96ec-e03a47e25f7d"
+							]
+						},
+						"description": "Get detailed information for a specific hospital.\n\n**Requires Authentication**\n\nPath Parameters:\n- hospital_id: Hospital identifier (e.g., \"3f3e1a06-279a-4714-96ec-e03a47e25f7d\")\n\nReturns:\n- hospital: Hospital object with full details\n\nReturns 404 if hospital not found."
+					},
+					"response": []
+				},
+				{
+					"name": "Get Hospital Inventory",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Status code is 200\", function () {",
+									"    pm.response.to.have.status(200);",
+									"});",
+									"",
+									"pm.test(\"Response has inventory data\", function () {",
+									"    var jsonData = pm.response.json();",
+									"    pm.expect(jsonData).to.have.property('inventory');",
+									"    pm.expect(jsonData.inventory).to.be.an('array');",
+									"    pm.expect(jsonData).to.have.property('hospital_id');",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"auth": {
+							"type": "apikey",
+							"apikey": [
+								{
+									"key": "value",
+									"value": "{{api_key}}",
+									"type": "string"
+								},
+								{
+									"key": "key",
+									"value": "X-API-Key",
+									"type": "string"
+								}
+							]
+						},
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/api/v1/hospitals/3f3e1a06-279a-4714-96ec-e03a47e25f7d/inventory",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"v1",
+								"hospitals",
+								"3f3e1a06-279a-4714-96ec-e03a47e25f7d",
+								"inventory"
+							]
+						},
+						"description": "Get current inventory for a specific hospital.\n\n**Requires Authentication**\n\nPath Parameters:\n- hospital_id: Hospital identifier\n\nReturns:\n- hospital_id: Hospital identifier\n- inventory: Array of inventory items\n- count: Number of inventory items\n\nEach inventory item includes:\n- resource_type: Type of resource\n- quantity: Current stock\n- available_quantity: Available for use\n- critical_threshold: Minimum safe level\n- max_capacity: Maximum storage"
+					},
+					"response": []
+				},
+				{
+					"name": "Get Hospital Status (Complete)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Status code is 200\", function () {",
+									"    pm.response.to.have.status(200);",
+									"});",
+									"",
+									"pm.test(\"Response has complete status\", function () {",
+									"    var jsonData = pm.response.json();",
+									"    pm.expect(jsonData).to.have.property('current_inventory');",
+									"    pm.expect(jsonData).to.have.property('demand_predictions');",
+									"    pm.expect(jsonData).to.have.property('shortage_risks');",
+									"    pm.expect(jsonData).to.have.property('hospital_id');",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"auth": {
+							"type": "apikey",
+							"apikey": [
+								{
+									"key": "value",
+									"value": "{{api_key}}",
+									"type": "string"
+								},
+								{
+									"key": "key",
+									"value": "X-API-Key",
+									"type": "string"
+								}
+							]
+						},
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/api/v1/hospitals/3f3e1a06-279a-4714-96ec-e03a47e25f7d/status",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"v1",
+								"hospitals",
+								"3f3e1a06-279a-4714-96ec-e03a47e25f7d",
+								"status"
+							]
+						},
+						"description": "Get complete hospital status with ML predictions.\n\n**Requires Authentication**\n**Uses ML Core** - May take 2-5 seconds\n\nPath Parameters:\n- hospital_id: Hospital identifier\n\nReturns comprehensive status:\n- hospital_id: Hospital identifier\n- current_inventory: Current stock levels\n- demand_predictions: Forecasts for all resources\n- shortage_risks: Risk assessment for all resources\n- timestamp: ISO timestamp\n\nThis endpoint combines:\n1. Current inventory data (from database)\n2. ML demand predictions (LSTM models)\n3. Shortage risk analysis (Random Forest)\n\nUse this for complete hospital dashboards."
+					},
+					"response": []
+				}
+			],
+			"description": "Hospital data endpoints for querying hospital information, inventory, and status"
+		},
+		{
+			"name": "Outbreaks",
+			"item": [
+				{
+					"name": "List All Outbreaks",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Status code is 200\", function () {",
+									"    pm.response.to.have.status(200);",
+									"});",
+									"",
+									"pm.test(\"Response has outbreaks array\", function () {",
+									"    var jsonData = pm.response.json();",
+									"    pm.expect(jsonData).to.have.property('outbreaks');",
+									"    pm.expect(jsonData.outbreaks).to.be.an('array');",
+									"    pm.expect(jsonData).to.have.property('count');",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"auth": {
+							"type": "apikey",
+							"apikey": [
+								{
+									"key": "value",
+									"value": "{{api_key}}",
+									"type": "string"
+								},
+								{
+									"key": "key",
+									"value": "X-API-Key",
+									"type": "string"
+								}
+							]
+						},
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/api/v1/outbreaks",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"v1",
+								"outbreaks"
+							],
+							"query": [
+								{
+									"key": "start_date",
+									"value": "2024-06-01",
+									"description": "Filter events starting on/after this date",
+									"disabled": true
+								},
+								{
+									"key": "end_date",
+									"value": "2024-12-31",
+									"description": "Filter events ending on/before this date",
+									"disabled": true
+								},
+								{
+									"key": "event_type",
+									"value": "outbreak",
+									"description": "Filter by event type",
+									"disabled": true
+								},
+								{
+									"key": "severity",
+									"value": "high",
+									"description": "Filter by severity",
+									"disabled": true
+								},
+								{
+									"key": "region",
+									"value": "Bihar",
+									"description": "Filter by affected region",
+									"disabled": true
+								},
+								{
+									"key": "limit",
+									"value": "10",
+									"description": "Limit number of results",
+									"disabled": true
+								}
+							]
+						},
+						"description": "List all outbreaks/events with optional filters.\n\n**Requires Authentication**\n\nQuery Parameters (Optional):\n- **start_date**: Filter events starting on/after this date (ISO format)\n- **end_date**: Filter events ending on/before this date (ISO format)\n- **region**: Filter by affected region\n- **event_type**: Filter by type (outbreak, supply_disruption)\n- **severity**: Filter by severity (low, medium, high, critical)\n- **limit**: Limit number of results (1-100)\n\nReturns:\n- outbreaks: Array of outbreak/event objects\n- count: Number of outbreaks found\n- filters: Applied filters (if any)\n- timestamp: ISO timestamp"
+					},
+					"response": []
+				},
+				{
+					"name": "Get Outbreak by ID",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Status code is 200 or 404\", function () {",
+									"    pm.expect(pm.response.code).to.be.oneOf([200, 404]);",
+									"});",
+									"",
+									"if (pm.response.code === 200) {",
+									"    pm.test(\"Response has outbreak data\", function () {",
+									"        var jsonData = pm.response.json();",
+									"        pm.expect(jsonData).to.have.property('outbreak');",
+									"        pm.expect(jsonData.outbreak).to.be.an('object');",
+									"    });",
+									"}"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"auth": {
+							"type": "apikey",
+							"apikey": [
+								{
+									"key": "value",
+									"value": "{{api_key}}",
+									"type": "string"
+								},
+								{
+									"key": "key",
+									"value": "X-API-Key",
+									"type": "string"
+								}
+							]
+						},
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/api/v1/outbreaks/{outbreak_id}",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"v1",
+								"outbreaks",
+								"{outbreak_id}"
+							],
+							"variable": [
+								{
+									"key": "outbreak_id",
+									"value": "",
+									"description": "UUID of the outbreak"
+								}
+							]
+						},
+						"description": "Get specific outbreak/event by ID.\n\n**Requires Authentication**\n\nPath Parameters:\n- **outbreak_id**: UUID of the outbreak\n\nReturns:\n- outbreak: Outbreak/event details\n- timestamp: ISO timestamp\n\nReturns 404 if outbreak not found."
+					},
+					"response": []
+				},
+				{
+					"name": "Get Active Outbreaks",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Status code is 200\", function () {",
+									"    pm.response.to.have.status(200);",
+									"});",
+									"",
+									"pm.test(\"Response has active outbreaks\", function () {",
+									"    var jsonData = pm.response.json();",
+									"    pm.expect(jsonData).to.have.property('active_outbreaks');",
+									"    pm.expect(jsonData.active_outbreaks).to.be.an('array');",
+									"    pm.expect(jsonData).to.have.property('count');",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"auth": {
+							"type": "apikey",
+							"apikey": [
+								{
+									"key": "value",
+									"value": "{{api_key}}",
+									"type": "string"
+								},
+								{
+									"key": "key",
+									"value": "X-API-Key",
+									"type": "string"
+								}
+							]
+						},
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/api/v1/outbreaks/active",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"v1",
+								"outbreaks",
+								"active"
+							],
+							"query": [
+								{
+									"key": "region",
+									"value": "Bihar",
+									"description": "Filter by affected region",
+									"disabled": true
+								}
+							]
+						},
+						"description": "Get currently active outbreaks/events.\n\n**Requires Authentication**\n\nQuery Parameters (Optional):\n- **region**: Filter by affected region\n\nReturns:\n- active_outbreaks: Array of currently active outbreaks (where current date is between start_date and end_date)\n- count: Number of active outbreaks\n- timestamp: ISO timestamp"
+					},
+					"response": []
+				},
+				{
+					"name": "Get Outbreak Impact",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Status code is 200 or 404\", function () {",
+									"    pm.expect(pm.response.code).to.be.oneOf([200, 404]);",
+									"});",
+									"",
+									"if (pm.response.code === 200) {",
+									"    pm.test(\"Response has impact data\", function () {",
+									"        var jsonData = pm.response.json();",
+									"        pm.expect(jsonData).to.have.property('outbreak_id');",
+									"        pm.expect(jsonData).to.have.property('outbreak_name');",
+									"        pm.expect(jsonData).to.have.property('impact_period');",
+									"        pm.expect(jsonData).to.have.property('affected_hospitals');",
+									"        pm.expect(jsonData).to.have.property('shortages_during_event');",
+									"    });",
+									"}"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"auth": {
+							"type": "apikey",
+							"apikey": [
+								{
+									"key": "value",
+									"value": "{{api_key}}",
+									"type": "string"
+								},
+								{
+									"key": "key",
+									"value": "X-API-Key",
+									"type": "string"
+								}
+							]
+						},
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/api/v1/outbreaks/impact/{outbreak_id}",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"v1",
+								"outbreaks",
+								"impact",
+								"{outbreak_id}"
+							],
+							"variable": [
+								{
+									"key": "outbreak_id",
+									"value": "",
+									"description": "UUID of the outbreak"
+								}
+							],
+							"query": [
+								{
+									"key": "resource_type",
+									"value": "ppe",
+									"description": "Filter by resource type",
+									"disabled": true
+								}
+							]
+						},
+						"description": "Get impact analysis for a specific outbreak.\n\n**Requires Authentication**\n\nPath Parameters:\n- **outbreak_id**: UUID of the outbreak\n\nQuery Parameters (Optional):\n- **resource_type**: Filter by resource type\n\nReturns:\n- outbreak_id: UUID of the outbreak\n- outbreak_name: Name of the outbreak\n- impact_period: Start and end dates of the event\n- affected_hospitals: List of hospitals affected by the outbreak\n- shortages_during_event: List of shortages that occurred during the event period\n- demand_increase: Demand increase metrics (if available)\n- timestamp: ISO timestamp\n\nThis endpoint analyzes the impact of an outbreak by:\n1. Identifying affected hospitals\n2. Finding shortages during the event period\n3. Comparing demand vs supply during the event"
+					},
+					"response": []
+				}
+			],
+			"description": "Outbreak and event query endpoints for accessing historical outbreak data, active outbreaks, and impact analysis"
+		}
+	],
+	"variable": [
+		{
+			"key": "base_url",
+			"value": "http://localhost:8000",
+			"type": "string"
+		},
+		{
+			"key": "api_key",
+			"value": "dev-key-123",
+			"type": "string"
+		}
+	]
+}
