@@ -756,17 +756,26 @@ See [`backend/POSTMAN_GUIDE.md`](backend/POSTMAN_GUIDE.md) for detailed usage.
 
 ### Known Issues & Fixes
 
-#### 1. Feature Engineering Mismatch ⚠️ (In Progress)
-**Issue:** Prediction endpoint returns feature count mismatch error
+#### 1. Feature Engineering Mismatch ✅ Fixed
+**Issue:** Prediction endpoint was returning feature count mismatch error
 ```
 X has 4 features, but StandardScaler is expecting 17 features
 ```
 
-**Root Cause:** The `predict_for_hospital` method only extracts 4 basic features (quantity, consumption, resupply, admissions) but the trained LSTM models expect 17 engineered features.
+**Root Cause:** The `predict_for_hospital` method was only extracting 4 basic features (quantity, consumption, resupply, admissions) but the trained LSTM models expect 17 engineered features.
 
-**Status:** Being fixed - need to add feature engineering to prediction pipeline
+**Fix Applied:** Updated `ml_core/models/demand_forecaster.py` to engineer all 17 features in `predict_for_hospital` method:
+- Base features (4): quantity, consumption, resupply, total_admissions
+- Trend features (4): quantity_ma_7d, quantity_ma_14d, quantity_trend, consumption_trend
+- Change features (2): quantity_change, consumption_change
+- Normalized features (2): quantity_per_admission, consumption_rate
+- Momentum features (2): quantity_momentum, consumption_momentum
+- Percentage change features (2): quantity_pct_change, consumption_pct_change
+- Directional indicator (1): trend_direction
 
-**Workaround:** None currently - demand predictions are temporarily unavailable
+**Status:** ✅ Fixed - Demand predictions now working correctly with all 17 features
+
+**Files:** `ml_core/models/demand_forecaster.py:655-705`
 
 #### 2. Date Range Configuration ✅ Fixed
 **Issue:** API was querying 2025 dates but database has 2023 historical data
@@ -842,13 +851,185 @@ curl -H "Authorization: Bearer your_jwt_token" http://localhost:8000/hospitals
 ### Next Steps
 
 **Pending Tasks:**
-1. ⚠️ Fix feature engineering in prediction pipeline (HIGH PRIORITY)
+1. ✅ Feature engineering in prediction pipeline - **FIXED**
 2. Add rate limiting for production deployment
 3. Implement request caching for frequently accessed data
 4. Add monitoring and logging (Sentry integration)
 5. Deploy to cloud (Render/Railway/AWS)
 
 For detailed implementation status, see [`docs/PHASE_4_COMPLETE.md`](docs/PHASE_4_COMPLETE.md).
+
+---
+
+## Phase 5: Agentic Layer (LangGraph Workflow)
+
+### Overview
+Phase 5 implements an intelligent multi-agent orchestration system using **LangGraph** that automates resource allocation decisions through specialized AI agents with human-in-the-loop oversight and adaptive preference learning.
+
+**Status:** ✅ Phase 5 Complete - Production Ready
+
+### Architecture
+
+**7-Agent Workflow:**
+```
+1. Data Analyst → Assesses current shortages and outbreaks
+2. Forecasting → Predicts 14-day demand for at-risk hospitals
+3. Optimization → Generates multiple allocation strategies
+4. Preference → Ranks strategies by user preferences
+5. Reasoning → Generates AI explanation using Groq/Llama 3.3 70B
+6. Human Review → You review and select a strategy (HITL)
+7. Feedback → System learns from your decision
+```
+
+**Tech Stack:**
+- **Orchestration:** LangGraph 0.2.28+
+- **State Management:** SQLite checkpointing
+- **LLM:** Groq/Llama 3.3 70B (configurable)
+- **CLI:** Typer + Rich
+- **Web UI:** Streamlit (optional)
+
+### Key Features
+
+- **Intelligent Routing:** Conditional workflow paths based on state
+- **Human-in-the-Loop:** Review and approve recommendations before execution
+- **Adaptive Learning:** System learns from user decisions over time
+- **State Persistence:** Resume workflows across sessions
+- **Multiple Interfaces:** CLI and Web UI
+
+### Quick Start
+
+**1. Install Dependencies:**
+```bash
+pip install -r requirements.txt
+```
+
+**2. Set Up Environment:**
+```bash
+# Add to .env file
+GROQ_API_KEY=gsk_your_key_here  # Required for reasoning agent
+MEDFLOW_API_BASE=http://localhost:8000
+MEDFLOW_API_KEY=dev-key-123
+DEFAULT_LLM_MODEL=llama-3.3-70b-versatile
+DEMO_HOSPITAL_LIMIT=5  # Limit hospitals for demo (default: 5)
+```
+
+**3. Start Backend Server:**
+```bash
+cd backend
+uvicorn app.main:app --reload --port 8000
+```
+
+**4. Run the Workflow:**
+
+**CLI (Command Line):**
+```bash
+python -m cli.main allocate --resource ventilators --user test_user
+```
+
+**With Outbreak Context:**
+```bash
+python -m cli.main allocate \
+  --resource ventilators \
+  --outbreak "dd891681-7e1a-409c-81dd-96009394802c"
+```
+
+**With Specific Hospitals:**
+```bash
+python -m cli.main allocate \
+  --resource ventilators \
+  --hospital "hospital-id-1,hospital-id-2"
+```
+
+### Workflow Configuration
+
+**Environment Variables (.env):**
+
+```bash
+# LLM Configuration
+GROQ_API_KEY=gsk_your_key_here  # Required for reasoning agent
+DEFAULT_LLM_MODEL=llama-3.3-70b-versatile
+DEFAULT_LLM_TEMPERATURE=0.3
+
+# API Configuration
+MEDFLOW_API_BASE=http://localhost:8000
+MEDFLOW_API_KEY=dev-key-123
+TIMEOUT_SECONDS=120
+
+# Performance Configuration
+DEMO_HOSPITAL_LIMIT=5              # Limit hospitals processed (default: 5)
+DEMO_N_STRATEGIES=2                # Number of strategies (default: 2, max: 3)
+OPTIMIZATION_TIME_LIMIT=15         # Max seconds per optimization (default: 15)
+
+# For faster demos
+DEMO_HOSPITAL_LIMIT=3              # Process only 3 hospitals
+DEMO_N_STRATEGIES=1                # Generate only 1 strategy
+
+# For production
+DEMO_HOSPITAL_LIMIT=50             # Process more hospitals
+DEMO_N_STRATEGIES=3                # Generate all 3 strategies
+OPTIMIZATION_TIME_LIMIT=30        # Allow more time for optimization
+
+# LangSmith Tracing (Optional)
+LANGSMITH_API_KEY=your_key_here
+LANGSMITH_PROJECT=medflow
+LANGSMITH_TRACING=true
+```
+
+### Workflow Consistency
+
+**Recent Improvements:**
+- **Forecasting and Optimization Consistency:** Both nodes now use `DEMO_HOSPITAL_LIMIT` to ensure the same hospitals are processed
+- **Parallel Forecasting:** Demand predictions run in parallel using `ThreadPoolExecutor` for faster execution
+- **Configurable Limits:** All hospital limits controlled via `DEMO_HOSPITAL_LIMIT` environment variable
+
+**Before:** Forecasting processed 5 hospitals, optimization processed 50 hospitals (inconsistent)
+**After:** Both forecasting and optimization process the same number of hospitals (consistent)
+
+### CLI Interface
+
+**Commands:**
+
+```bash
+# Run workflow
+python -m cli.main allocate --resource ventilators --user test_user
+
+# With outbreak context
+python -m cli.main allocate --resource ventilators --outbreak "outbreak-id"
+
+# With specific hospitals
+python -m cli.main allocate --resource ventilators --hospital "id1,id2"
+
+# Show version
+python -m cli.main version
+```
+
+**Options:**
+- `--resource` / `-r`: Resource type (ventilators, ppe, o2_cylinders, beds, medications)
+- `--user` / `-u`: User ID for preference learning (default: "default_user")
+- `--hospital` / `-h`: Hospital ID(s) to process (comma-separated, optional)
+- `--outbreak` / `-o`: Outbreak ID to use for context (optional)
+
+### Performance Optimizations
+
+**Speed Improvements:**
+1. **Parallelized Forecasting:** 3-4x faster using ThreadPoolExecutor
+2. **Reduced Strategy Count:** 33% faster optimization (configurable)
+3. **Optimized Hospital Limits:** 10x reduction in data processing
+4. **Reduced Optimization Time:** 15 seconds max (configurable)
+
+**Expected Performance:**
+- **Before:** ~237 seconds (4 minutes)
+- **After:** ~120-150 seconds (2-2.5 minutes)
+- **Overall Speedup:** ~40-50% faster
+
+For detailed optimization guide, see [`SPEED_OPTIMIZATIONS.md`](SPEED_OPTIMIZATIONS.md).
+
+### Documentation
+
+- **Quick Start:** [`AGENTS_RUN_GUIDE.md`](AGENTS_RUN_GUIDE.md)
+- **Implementation Details:** [`docs/PHASE_5_IMPLEMENTATION_SUMMARY.md`](docs/PHASE_5_IMPLEMENTATION_SUMMARY.md)
+- **Architecture:** [`docs/PHASE_5_PLAN.md`](docs/PHASE_5_PLAN.md)
+- **Workflow Analysis:** [`WORKFLOW_ANALYSIS.md`](WORKFLOW_ANALYSIS.md)
 
 ---
 
