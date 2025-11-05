@@ -1,0 +1,31 @@
+{
+  "feature_names": [
+    "stock_demand_ratio",
+    "stock_demand_ratio_14d",
+    "stock_capacity_ratio",
+    "demand_capacity_ratio",
+    "days_of_supply",
+    "days_since_resupply",
+    "days_to_critical",
+    "predicted_stockout_day",
+    "consumption_trend_7d",
+    "consumption_volatility",
+    "consumption_acceleration",
+    "predicted_demand_change",
+    "regional_avg_stock",
+    "regional_transfer_availability",
+    "isolation_score",
+    "admission_trend_7d",
+    "icu_admission_ratio",
+    "emergency_admission_spike",
+    "resource_criticality",
+    "consumption_per_admission"
+  ],
+  "risk_levels": [
+    "low",
+    "medium",
+    "high",
+    "critical"
+  ],
+  "n_estimators": 200
+}

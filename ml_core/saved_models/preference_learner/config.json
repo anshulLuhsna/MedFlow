@@ -1,0 +1,26 @@
+{
+  "feature_names": [
+    "total_cost",
+    "cost_per_unit",
+    "cost_score",
+    "estimated_time_hours",
+    "transfer_complexity",
+    "speed_score",
+    "hospitals_helped",
+    "total_resources_allocated",
+    "shortage_reduction",
+    "coverage_score",
+    "regional_balance",
+    "priority_alignment",
+    "fairness_score",
+    "risk_level_addressed",
+    "urgency_level",
+    "num_source_hospitals",
+    "average_transfer_distance"
+  ],
+  "default_weights": {
+    "cost_score": 0.33,
+    "speed_score": 0.33,
+    "coverage_score": 0.34
+  }
+}
