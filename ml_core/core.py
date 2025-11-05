@@ -207,7 +207,9 @@ class MLCore:
         self,
         resource_type: str,
         days_ahead: int = 14,
-        hospital_limit: int = None
+        hospital_limit: int = None,
+        hospital_ids: Optional[List[str]] = None,
+        regions: Optional[List[str]] = None
     ) -> pd.DataFrame:
         """
         Predict demand for all hospitals
@@ -216,11 +218,26 @@ class MLCore:
             resource_type: Type of resource to predict
             days_ahead: Number of days to forecast
             hospital_limit: Optional limit on number of hospitals to process (max 100)
+            hospital_ids: Optional list of hospital IDs to process (filters to only these hospitals)
+            regions: Optional list of regions to filter by
         
         Returns:
             DataFrame with predictions for all hospitals
         """
-        hospitals = self.data_loader.get_hospitals(limit=hospital_limit)
+        # If hospital_ids provided, use limit=100 to get all, then filter
+        # If regions provided, filter by regions
+        # Default to 5 for demo performance if hospital_limit not provided
+        hospitals = self.data_loader.get_hospitals(
+            limit=(hospital_limit or 5) if not hospital_ids else 100,
+            regions=regions
+        )
+        
+        # Filter by hospital_ids if provided
+        if hospital_ids:
+            hospitals = hospitals[hospitals['hospital_id'].isin(hospital_ids)].copy()
+            if hospitals.empty:
+                print(f"[Predict Demand] No hospitals found matching provided IDs: {hospital_ids}")
+                return pd.DataFrame()
         
         # Check if hospitals DataFrame is empty
         if hospitals.empty:
@@ -323,7 +340,9 @@ class MLCore:
     def detect_shortages(
         self,
         resource_type: Optional[str] = None,
-        hospital_limit: int = None
+        hospital_limit: int = None,
+        hospital_ids: Optional[List[str]] = None,
+        regions: Optional[List[str]] = None
     ) -> pd.DataFrame:
         """
         Detect shortage risks across all hospitals
@@ -349,7 +368,7 @@ class MLCore:
             print("[Shortage Detection] Generating demand predictions...")
             if resource_type:
                 print(f"[Shortage Detection] Predicting demand for resource type: {resource_type}")
-                demand_preds = self.predict_demand_all_hospitals(resource_type, hospital_limit=hospital_limit)
+                demand_preds = self.predict_demand_all_hospitals(resource_type, hospital_limit=hospital_limit, hospital_ids=hospital_ids, regions=regions)
                 print(f"[Shortage Detection] Generated {len(demand_preds)} demand prediction rows")
                 if not demand_preds.empty:
                     print(f"[Shortage Detection] Demand prediction columns: {demand_preds.columns.tolist()}")
@@ -361,7 +380,7 @@ class MLCore:
                 for idx, rt in enumerate(RESOURCE_TYPES):
                     print(f"[Shortage Detection] Processing resource type {idx+1}/{len(RESOURCE_TYPES)}: {rt}")
                     try:
-                        preds = self.predict_demand_all_hospitals(rt, hospital_limit=hospital_limit)
+                        preds = self.predict_demand_all_hospitals(rt, hospital_limit=hospital_limit, hospital_ids=hospital_ids, regions=regions)
                         if not preds.empty:
                             all_preds.append(preds)
                             print(f"[Shortage Detection] Generated {len(preds)} predictions for {rt}")
@@ -391,13 +410,31 @@ class MLCore:
             )
             print(f"[Shortage Detection] Found {len(admissions)} admissions records")
             
-            # Get hospital info
+            # Get hospital info - need more hospitals for regional feature calculations
+            # Even if we limit processing, we need hospital info for regional context
             print("[Shortage Detection] Fetching hospital info...")
-            hospitals = self.data_loader.get_hospitals(limit=hospital_limit)
+            # Get more hospitals for regional feature calculations (at least 50, or all if filtering by regions)
+            hospital_info_limit = 50 if not regions else None  # Get more for regional calculations
+            hospitals = self.data_loader.get_hospitals(limit=hospital_info_limit, regions=regions)
             if hospitals.empty:
                 print("[Shortage Detection] Warning: No hospital data found")
                 return pd.DataFrame()
             print(f"[Shortage Detection] Found {len(hospitals)} hospitals")
+            
+            # Also get more inventory for regional calculations
+            # Regional features need context from other hospitals in the region
+            if regions or hospital_limit:
+                # Get inventory for regional context (at least 50 hospitals)
+                regional_inventory = self.data_loader.get_current_inventory()
+                # Filter by regions if provided
+                if regions and 'region' in regional_inventory.columns:
+                    regional_inventory = regional_inventory[regional_inventory['region'].isin(regions)]
+                elif not regions:
+                    # If filtering by hospital_limit, get inventory for those hospitals plus regional context
+                    # Get inventory for all hospitals first, then filter
+                    regional_inventory = self.data_loader.get_current_inventory()
+            else:
+                regional_inventory = current_inventory
             
             # Validate demand_predictions DataFrame before passing to shortage_detector
             if demand_preds.empty:
@@ -413,14 +450,22 @@ class MLCore:
             
             print(f"[Shortage Detection] Validated demand_predictions: {len(demand_preds)} rows, columns: {demand_preds.columns.tolist()}")
             
-            # Detect shortages
+            # Detect shortages - use regional_inventory for feature engineering (has more context)
+            # but only return results for the limited hospitals
             print("[Shortage Detection] Running shortage detection model...")
             results = self.shortage_detector.detect_shortages(
-                current_inventory=current_inventory,
+                current_inventory=regional_inventory,  # Use regional inventory for feature engineering
                 demand_predictions=demand_preds,
                 admissions_history=admissions,
                 hospital_info=hospitals
             )
+            
+            # Filter results to only include hospitals from the limited set
+            if hospital_limit and not hospital_ids:
+                # Get hospital IDs from limited inventory
+                limited_hospital_ids = set(current_inventory['hospital_id'].unique())
+                results = results[results['hospital_id'].isin(limited_hospital_ids)].copy()
+                print(f"[Shortage Detection] Filtered results to {len(results)} hospitals from limited set")
             
             print(f"[Shortage Detection] Completed. Found {len(results)} shortage predictions")
             return results
@@ -432,14 +477,23 @@ class MLCore:
             print(f"[Shortage Detection] Traceback:\n{error_trace}")
             raise
     
-    def get_shortage_summary(self) -> Dict:
+    def get_shortage_summary(self, shortages_df: pd.DataFrame = None, hospital_limit: int = None) -> Dict:
         """
         Get summary of current shortage situation
+        
+        Args:
+            shortages_df: Optional pre-computed shortages DataFrame (avoids re-computation)
+            hospital_limit: Optional limit for hospitals if shortages_df is not provided
         
         Returns:
             Dict with aggregated shortage statistics
         """
-        shortages = self.detect_shortages()
+        if shortages_df is None:
+            # Only compute if not provided (with limit for demo)
+            shortages = self.detect_shortages(hospital_limit=hospital_limit)
+        else:
+            shortages = shortages_df
+        
         summary = self.shortage_detector.get_shortage_summary(shortages)
         return summary
     
@@ -645,7 +699,9 @@ class MLCore:
         self,
         resource_type: str,
         n_strategies: int = 3,
-        hospital_limit: int = None
+        hospital_limit: int = None,
+        hospital_ids: Optional[List[str]] = None,
+        regions: Optional[List[str]] = None
     ) -> List[Dict]:
         """
         Generate multiple allocation strategies
@@ -653,8 +709,8 @@ class MLCore:
         Returns:
             List of ranked strategies
         """
-        # Detect shortages
-        all_shortages = self.detect_shortages(resource_type, hospital_limit=hospital_limit)
+        # Detect shortages (with hospital_ids or regions filter if provided)
+        all_shortages = self.detect_shortages(resource_type, hospital_limit=hospital_limit, hospital_ids=hospital_ids, regions=regions)
         # Include medium, high, and critical risk levels for strategy generation
         shortage_hospitals = all_shortages[
             all_shortages['risk_level'].isin(['medium', 'high', 'critical'])
@@ -697,10 +753,23 @@ class MLCore:
                     axis=1
                 )
         
-        # Get hospital info first (with limit if specified)
-        hospitals = self.data_loader.get_hospitals(limit=hospital_limit)
-        limited_hospital_ids = set(hospitals['hospital_id'].tolist()) if not hospitals.empty else set()
-        print(f"[Generate Strategies] Processing {len(limited_hospital_ids)} hospitals (limit: {hospital_limit})")
+        # Get hospital info first (with limit if specified, or filter by hospital_ids/regions)
+        if hospital_ids:
+            # If hospital_ids provided, get all then filter
+            hospitals = self.data_loader.get_hospitals(limit=100, regions=regions)
+            hospitals = hospitals[hospitals['hospital_id'].isin(hospital_ids)].copy()
+            limited_hospital_ids = set(hospital_ids)  # Use provided IDs
+            print(f"[Generate Strategies] Processing {len(limited_hospital_ids)} specified hospitals")
+        elif regions:
+            # If regions provided, filter by regions
+            # Use hospital_limit if provided, otherwise default to 5 for demo performance
+            hospitals = self.data_loader.get_hospitals(limit=hospital_limit or 5, regions=regions)
+            limited_hospital_ids = set(hospitals['hospital_id'].tolist()) if not hospitals.empty else set()
+            print(f"[Generate Strategies] Processing {len(limited_hospital_ids)} hospitals from regions: {regions}")
+        else:
+            hospitals = self.data_loader.get_hospitals(limit=hospital_limit)
+            limited_hospital_ids = set(hospitals['hospital_id'].tolist()) if not hospitals.empty else set()
+            print(f"[Generate Strategies] Processing {len(limited_hospital_ids)} hospitals (limit: {hospital_limit})")
         
         # Find surplus (filtered by hospital limit)
         current_inventory = self.data_loader.get_current_inventory()

@@ -4,6 +4,10 @@ ML Core Configuration
 
 import os
 from pathlib import Path
+from dotenv import load_dotenv
+
+# Load environment variables
+load_dotenv()
 
 # Base paths
 BASE_DIR = Path(__file__).parent
@@ -48,7 +52,7 @@ SHORTAGE_DETECTION_CONFIG = {
 # Optimization Configuration
 OPTIMIZATION_CONFIG = {
     "solver": "PULP_CBC_CMD",  # Can use GLPK, COIN, etc.
-    "time_limit": 30,          # Max 30 seconds per optimization
+    "time_limit": int(os.getenv("OPTIMIZATION_TIME_LIMIT", "15")),  # Max 15 seconds per optimization (reduced for demos)
     "objectives": {
         "minimize_shortage": 1.0,
         "minimize_cost": 0.3,

@@ -5,7 +5,7 @@ Data loading utilities for ML models
 import pandas as pd
 import numpy as np
 from datetime import datetime, timedelta
-from typing import Dict, List, Tuple
+from typing import Dict, List, Tuple, Optional
 from supabase import Client
 import os
 from dotenv import load_dotenv
@@ -82,17 +82,42 @@ class DataLoader:
         
         return all_data
     
-    def get_hospitals(self, limit: int = None) -> pd.DataFrame:
+    def get_hospitals(self, limit: int = None, regions: Optional[List[str]] = None) -> pd.DataFrame:
         """
-        Fetch hospitals with optional limit
+        Fetch hospitals with optional limit and region filtering
         
         Args:
             limit: Optional limit on number of hospitals to fetch (max 100)
+            regions: Optional list of regions to filter by
         
         Returns:
             DataFrame with hospital data
         """
         query = self.client.table("hospitals").select("*")
+        
+        # Filter by regions if provided
+        if regions:
+            # Use .in_() for multiple regions
+            if len(regions) == 1:
+                query = query.eq("region", regions[0])
+            else:
+                # For multiple regions, we need to use OR - but Supabase Python client doesn't support OR directly
+                # So we'll fetch all and filter in Python
+                all_data = self._fetch_all_pages(query, "hospitals", verbose=False)
+                df = pd.DataFrame(all_data)
+                df = df[df['region'].isin(regions)].copy()
+                
+                # Apply limit after filtering
+                if limit is not None:
+                    if limit < 1 or limit > 100:
+                        raise ValueError("limit must be between 1 and 100")
+                    df = df.head(limit)
+                
+                # Rename 'id' to 'hospital_id' for consistency with other tables
+                if not df.empty and 'id' in df.columns:
+                    df = df.rename(columns={'id': 'hospital_id'})
+                
+                return df
         
         # Apply limit if provided
         if limit is not None:
