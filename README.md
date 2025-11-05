@@ -40,13 +40,16 @@ MedFlow AI is an adaptive AI agent that:
 ## Data Approach
 
 **Synthetic Healthcare Data Generation**
-- 100 hospitals across 5-6 regions
-- 6 months of historical data
-- 5 resource types tracked (ventilators, O2, beds, medications, PPE)
-- Realistic patterns: seasonal trends, outbreak events, regional imbalances
-- 10,000+ resource allocation scenarios
+- 100 hospitals across 16 regions (Maharashtra, Karnataka, Tamil Nadu, Kerala, Telangana, Andhra Pradesh, Delhi NCR, Uttar Pradesh, Rajasthan, Gujarat, West Bengal, Bihar, Punjab, Haryana, Madhya Pradesh, Assam)
+- 12 months (1 year) of historical data (Nov 2023 - Oct 2024)
+- 5 resource types tracked (ventilators, O2 cylinders, beds, medications, PPE)
+- Realistic patterns: seasonal trends, outbreak events, regional imbalances, supply disruptions
+- Weekly patterns (weekend dips), seasonal variations, and outbreak multipliers
+- 3 outbreak events (TB Outbreak, Dengue Peak, Air Pollution Surge) and supply disruption scenarios
 
 **Why synthetic?** Ensures reproducibility, privacy compliance, and controlled testing scenarios without access to sensitive real-world patient data.
+
+**Data Generation:** See [`data/generators/generate_synthetic_data.py`](data/generators/generate_synthetic_data.py) for the complete data generation pipeline.
 
 ---
 
