@@ -16,12 +16,12 @@ This problem intensifies during outbreaks and surges, where manual decision-maki
 
 ## Solution
 
-MedFlow AI is an adaptive AI agent that:
+MedFlow AI is a proof-of-concept adaptive AI agent that demonstrates how forecasting, detection, and optimization can integrate into an adaptive loop. It:
 
 1. **Analyzes** current resource distribution across healthcare facilities
 2. **Predicts** future demand and potential shortages using time-series forecasting
 3. **Optimizes** resource allocation through mathematical optimization
-4. **Adapts** to decision-maker preferences through reinforcement learning from user interactions
+4. **Adapts** to decision-maker preferences through reinforcement-learning-inspired preference adaptation via hybrid feedback scoring
 5. **Explains** recommendations with clear, actionable reasoning
 
 ### Key Capabilities
@@ -30,7 +30,7 @@ MedFlow AI is an adaptive AI agent that:
 -  7-14 day demand forecasting for critical medical resources
 - Shortage risk detection and early warning system
 - Multi-objective optimization (cost, coverage, fairness, urgency)
-- Preference learning that adapts to user priorities over time
+- Preference adaptation that learns from user feedback (hybrid feedback scoring, not full RL)
 - Explainable recommendations with similar case retrieval
 
 ### Architecture 
@@ -47,7 +47,10 @@ MedFlow AI is an adaptive AI agent that:
 - Weekly patterns (weekend dips), seasonal variations, and outbreak multipliers
 - 3 outbreak events (TB Outbreak, Dengue Peak, Air Pollution Surge) and supply disruption scenarios
 
-**Why synthetic?** Ensures reproducibility, privacy compliance, and controlled testing scenarios without access to sensitive real-world patient data.
+**Why synthetic?** 
+- Ensures reproducibility, privacy compliance, and controlled testing scenarios without access to sensitive real-world patient data
+- **Data mimics real-world variability** through realistic patterns (seasonal trends, outbreak multipliers, regional imbalances, supply disruptions)
+- **Note:** This design allows safe testing and validation of the pipeline before real-world deployment. Results on synthetic data validate system logic and feature engineering, but do not guarantee generalization to real hospital data.
 
 **Data Generation:** See [`data/generators/generate_synthetic_data.py`](data/generators/generate_synthetic_data.py) for the complete data generation pipeline.
 
@@ -107,15 +110,15 @@ MedFlow AI addresses three critical problems in medical resource allocation thro
 ## ML Models - Demand Forecasting (LSTM)
 
 ### Overview
-The demand forecasting system uses **LSTM (Long Short-Term Memory)** neural networks to predict future consumption of medical resources. All 5 models are trained and production-ready.
+The demand forecasting system demonstrates how **LSTM (Long Short-Term Memory)** neural networks can predict future consumption of medical resources. All 5 models are trained and serve as proof-of-concept implementations.
 
 ### Trained Models
 
 | Resource | MAE | Status | Notes |
 |----------|-----|--------|-------|
-| **PPE** | 4.65 | ✅ Production | Best documented, includes calibration |
-| **O2 Cylinders** | 2.03 | ✅ Production | Use MAE metric, not MAPE |
-| **Ventilators** | 1.02 | ✅ Production | Excellent accuracy (±1 unit) |
+| **PPE** | 4.65 | ✅ Proof of Concept | Best documented, includes calibration |
+| **O2 Cylinders** | 2.03 | ✅ Proof of Concept | Use MAE metric, not MAPE |
+| **Ventilators** | 1.02 | ✅ Proof of Concept | Excellent accuracy (±1 unit) |
 | **Medications** | TBD | ✅ Trained | Ready for evaluation |
 | **Beds** | TBD | ✅ Trained | Ready for evaluation |
 
@@ -241,13 +244,14 @@ Example: Actual=2, Predicted=1, Error=1 → MAPE=50% (misleading!)
 **Strengths:**
 - ✅ Point predictions accurate (MAE 1-5 units)
 - ✅ All models converge reliably
-- ✅ Production-ready with calibration
+- ✅ Proof-of-concept implementation with calibration
 - ✅ Fast inference (<1 sec point, ~60 sec probabilistic)
 
 **Limitations:**
-- ⚠️ Trained on synthetic data (needs real hospital data)
+- ⚠️ Trained on synthetic data (needs real hospital data for deployment)
 - ⚠️ Probabilistic calibration not perfect (66.7% vs 80% target)
 - ⚠️ High dropout (0.5) trades accuracy for better uncertainty
+- ⚠️ Results validate pipeline logic but do not guarantee generalization to real data
 
 ---
 
@@ -260,10 +264,12 @@ The shortage detection system uses a **Random Forest classifier** to predict sho
 
 | Metric | Value | Status |
 |--------|-------|--------|
-| **Overall Accuracy** | 100% | ✅ Production |
-| **Critical Recall** | 85% | ✅ Production |
-| **Critical Precision** | 85% | ✅ Production |
-| **Weighted F1** | 100% | ✅ Production |
+| **Overall Accuracy** | 100% | ✅ Proof of Concept |
+| **Critical Recall** | 85% | ✅ Proof of Concept |
+| **Critical Precision** | 85% | ✅ Proof of Concept |
+| **Weighted F1** | 100% | ✅ Proof of Concept |
+
+**⚠️ Important Note:** 100% accuracy results from rule-based synthetic labeling, validating pipeline logic, not model generalization. The synthetic data uses deterministic rules to generate shortage labels, so the model correctly learns these patterns. This validates the feature engineering and model structure, but does not indicate performance on real-world data.
 
 ### Features (20 Total)
 
@@ -338,7 +344,7 @@ print(f"Critical shortages: {summary['by_risk_level'].get('critical', 0)}")
 4. `predicted_stockout_day` (13.21%)
 5. `days_to_critical` (7.58%)
 
-**Note:** Perfect accuracy (100%) is expected for synthetic data because labels are rule-based and the model learns those rules. This validates the feature engineering and model structure.
+**Note:** Perfect accuracy (100%) is expected for synthetic data because labels are rule-based and the model learns those rules. This validates the feature engineering and model structure, but does not guarantee generalization to real-world data where labels may be more ambiguous or noisy.
 
 ---
 
@@ -623,7 +629,7 @@ For detailed documentation, see [`ml_core/PREFERENCE_LEARNING_STATUS.md`](ml_cor
 ### Overview
 The MedFlow API provides RESTful endpoints to access all ML Core functionality. Built with **FastAPI**, it offers automatic API documentation, type validation, and async support.
 
-**Status:** ✅ Phase 4 Complete - Production Ready
+**Status:** ✅ Phase 4 Complete - Proof of Concept Ready
 
 ### Architecture
 
@@ -869,7 +875,7 @@ For detailed implementation status, see [`docs/PHASE_4_COMPLETE.md`](docs/PHASE_
 ### Overview
 Phase 5 implements an intelligent multi-agent orchestration system using **LangGraph** that automates resource allocation decisions through specialized AI agents with human-in-the-loop oversight and adaptive preference learning.
 
-**Status:** ✅ Phase 5 Complete - Production Ready
+**Status:** ✅ Phase 5 Complete - Proof of Concept Ready
 
 ### Architecture
 
@@ -1041,7 +1047,7 @@ For detailed optimization guide, see [`SPEED_OPTIMIZATIONS.md`](SPEED_OPTIMIZATI
 ### Overview
 The MedFlow Streamlit Dashboard provides a **web-based user interface** for running the complete 7-agent workflow. Built with **Streamlit**, it offers an intuitive, interactive way to configure and execute resource allocation workflows without using the command line.
 
-**Status:** ✅ Phase 5 Complete - Production Ready
+**Status:** ✅ Phase 5 Complete - Proof of Concept Ready
 
 ### Features
 
