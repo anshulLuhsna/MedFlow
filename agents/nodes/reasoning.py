@@ -32,6 +32,9 @@ def reasoning_node(state: MedFlowState) -> Dict:
     """
     logger.info("[Reasoning] Generating LLM explanation")
 
+    import time
+    reasoning_start = time.time()
+
     # Get top recommendation
     top_strategy = state.get("ranked_strategies", [{}])[0] if state.get("ranked_strategies") else {}
     
@@ -60,6 +63,8 @@ def reasoning_node(state: MedFlowState) -> Dict:
             f"The strategy has been optimized using linear programming to balance cost efficiency, coverage, "
             f"and urgency while respecting distance constraints and hospital capacities."
         )
+        reasoning_elapsed = time.time() - reasoning_start
+        logger.info(f"[Reasoning] Template-based explanation generated in {reasoning_elapsed:.2f}s")
     else:
         # Initialize LLM (Groq/Llama 3.3 70B)
         try:
@@ -91,14 +96,18 @@ Generate a clear, actionable explanation in 3-4 sentences.
 """
 
             # Generate explanation
+            llm_start = time.time()
             response = llm.invoke([
                 SystemMessage(content=system_prompt),
                 HumanMessage(content=human_prompt)
             ])
+            llm_elapsed = time.time() - llm_start
+            logger.info(f"[Reasoning] LLM call completed in {llm_elapsed:.2f}s")
 
             explanation = response.content
         except Exception as e:
-            logger.error(f"[Reasoning] LLM call failed: {e}. Using fallback explanation.")
+            llm_elapsed = time.time() - llm_start if 'llm_start' in locals() else 0
+            logger.error(f"[Reasoning] LLM call failed after {llm_elapsed:.2f}s: {e}. Using fallback explanation.")
             # Fallback explanation
             explanation = (
                 f"The {strategy_name} strategy is recommended to address "
@@ -107,8 +116,9 @@ Generate a clear, actionable explanation in 3-4 sentences.
                 f"at a cost of ${total_cost:,.0f}, reducing shortages by "
                 f"{shortage_reduction:.1f}%."
             )
-
-    logger.info(f"[Reasoning] Generated {len(explanation)} character explanation")
+    
+    reasoning_elapsed = time.time() - reasoning_start
+    logger.info(f"[Reasoning] Generated {len(explanation)} character explanation in {reasoning_elapsed:.2f}s total")
 
     return {
         "final_recommendation": top_strategy,

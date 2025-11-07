@@ -41,23 +41,48 @@ def optimization_node(state: MedFlowState) -> Dict:
     # Call strategy generation API
     hospital_ids = state.get("hospital_ids")
     affected_regions = state.get("affected_regions")  # From outbreak context
+    simulation_date = state.get("simulation_date")  # For time-travel simulations
+    
+    # AGGRESSIVE DEBUG: Log with error level
+    logger.error(f"[Optimization] ⚠️ STATE DEBUG:")
+    logger.error(f"[Optimization]   simulation_date from state = {simulation_date} (type: {type(simulation_date)})")
+    logger.error(f"[Optimization]   State keys: {list(state.keys())}")
+    print(f"[Optimization ERROR] simulation_date = {simulation_date}")
+    
+    # FALLBACK: If None, use current date and log error
+    if simulation_date is None:
+        from datetime import datetime
+        logger.error(f"[Optimization] ❌ CRITICAL: simulation_date is None! Using current date as fallback.")
+        simulation_date = datetime.now().strftime("%Y-%m-%d")
+        logger.error(f"[Optimization] ✅ Using fallback simulation_date: {simulation_date}")
     
     # If outbreak provided, use affected regions; otherwise use hospital_ids or limit
     if affected_regions:
-        limit = AgentConfig.DEMO_HOSPITAL_LIMIT  # Use demo limit for performance
+        limit = AgentConfig.get_hospital_limit()  # Use demo limit for performance
         hospital_ids = None  # Use regions instead
     else:
-        limit = 1 if hospital_ids else AgentConfig.DEMO_HOSPITAL_LIMIT
+        limit = 1 if hospital_ids else AgentConfig.get_hospital_limit()
+    
+    logger.info(f"[Optimization] Using hospital limit: {limit} (from DEMO_HOSPITAL_LIMIT={os.getenv('DEMO_HOSPITAL_LIMIT', '5')})")
+    if simulation_date:
+        logger.info(f"[Optimization] Using simulation date: {simulation_date}")
     
     # Use fewer strategies for faster demos (configurable)
     n_strategies = int(os.getenv("DEMO_N_STRATEGIES", "2"))  # Default to 2 for speed
+    logger.info(f"[Optimization] Generating {n_strategies} strategies...")
+    
+    import time
+    opt_start = time.time()
     result = api_client.generate_strategies(
         resource_type=state["resource_type"],
         n_strategies=n_strategies,
         limit=limit,
         hospital_ids=hospital_ids,
-        regions=affected_regions
+        regions=affected_regions,
+        simulation_date=simulation_date
     )
+    opt_elapsed = time.time() - opt_start
+    logger.info(f"[Optimization] Strategy generation completed in {opt_elapsed:.2f}s")
 
     strategies = result["strategies"]
     summary = f"Generated {len(strategies)} allocation strategies"
@@ -66,10 +91,13 @@ def optimization_node(state: MedFlowState) -> Dict:
 
     # Log key metrics
     for strategy in strategies:
+        strategy_summary = strategy.get('summary', {})
+        total_cost = strategy_summary.get('total_cost', 0)
+        hospitals_helped = strategy_summary.get('hospitals_helped', 0)
         logger.info(
-            f"  - {strategy['strategy_name']}: "
-            f"${strategy['summary']['total_cost']:.0f}, "
-            f"{strategy['summary']['hospitals_helped']} hospitals"
+            f"  - {strategy.get('strategy_name', 'Unknown')}: "
+            f"${total_cost:.0f}, "
+            f"{hospitals_helped} hospitals"
         )
 
     return {
