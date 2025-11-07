@@ -61,31 +61,59 @@ def data_analyst_node(state: MedFlowState) -> Dict:
                 # Get hospitals from affected regions (will be used in optimization)
                 # Use demo limit for performance, backend will filter by regions
                 hospital_ids = None  # Let backend handle region filtering
-                limit = 1 if hospital_ids else AgentConfig.DEMO_HOSPITAL_LIMIT
+                limit = 1 if hospital_ids else AgentConfig.get_hospital_limit()
             else:
-                limit = 1 if hospital_ids else AgentConfig.DEMO_HOSPITAL_LIMIT
+                limit = 1 if hospital_ids else AgentConfig.get_hospital_limit()
         except Exception as e:
             logger.warning(f"[Data Analyst] Failed to fetch outbreak {outbreak_id}: {e}")
-            limit = 1 if hospital_ids else AgentConfig.DEMO_HOSPITAL_LIMIT
+            limit = 1 if hospital_ids else AgentConfig.get_hospital_limit()
     else:
-        limit = 1 if hospital_ids else AgentConfig.DEMO_HOSPITAL_LIMIT
+        limit = 1 if hospital_ids else AgentConfig.get_hospital_limit()
+    
+    logger.info(f"[Data Analyst] Using hospital limit: {limit} (from DEMO_HOSPITAL_LIMIT={os.getenv('DEMO_HOSPITAL_LIMIT', '5')})")
+    
+    import time
+    from datetime import datetime
+    start_time = time.time()
+    simulation_date = state.get("simulation_date")
+    
+    # AGGRESSIVE DEBUG: Log with error level to ensure visibility
+    logger.error(f"[Data Analyst] ⚠️ STATE DEBUG:")
+    logger.error(f"[Data Analyst]   simulation_date from state = {simulation_date} (type: {type(simulation_date)})")
+    logger.error(f"[Data Analyst]   State keys: {list(state.keys())}")
+    print(f"[Data Analyst ERROR] simulation_date = {simulation_date}")
+    
+    # FALLBACK: If None, use current date and log error
+    if simulation_date is None:
+        logger.error(f"[Data Analyst] ❌ CRITICAL: simulation_date is None! Using current date as fallback.")
+        simulation_date = datetime.now().strftime("%Y-%m-%d")
+        logger.error(f"[Data Analyst] ✅ Using fallback simulation_date: {simulation_date}")
     
     shortages = api_client.get_shortages(
         resource_type=state.get("resource_type"),
         limit=limit,
-        hospital_ids=hospital_ids
+        hospital_ids=hospital_ids,
+        simulation_date=simulation_date
     )
+    elapsed = time.time() - start_time
+    logger.info(f"[Data Analyst] Shortage detection completed in {elapsed:.2f}s - found {shortages['count']} hospitals")
 
     # Get active outbreaks (or specific outbreak if provided)
+    # Ensure simulation_date is set (use fallback if still None)
+    if simulation_date is None:
+        from datetime import datetime
+        simulation_date = datetime.now().strftime("%Y-%m-%d")
+        logger.error(f"[Data Analyst] Using fallback simulation_date for outbreaks: {simulation_date}")
+    
     if outbreak_id:
         try:
             outbreak = api_client.get_outbreak(outbreak_id)
             outbreaks = {"active_outbreaks": [outbreak.get("outbreak", {})]}
         except Exception as e:
             logger.warning(f"[Data Analyst] Failed to fetch outbreak: {e}")
-            outbreaks = api_client.get_active_outbreaks()
+            outbreaks = api_client.get_active_outbreaks(simulation_date=simulation_date)
     else:
-        outbreaks = api_client.get_active_outbreaks()
+        outbreaks = api_client.get_active_outbreaks(simulation_date=simulation_date)
 
     # Generate summary
     summary = (

@@ -80,8 +80,64 @@ def human_review_node(state: MedFlowState) -> Dict:
         border_style="green"
     ))
 
+    # Check if we're running in automated/testing mode (auto-select first strategy)
+    automated_mode = os.getenv("AUTOMATED_TESTING", "false").lower() == "true"
+    
     # Check if we're running in Streamlit (workaround for blocking input)
     in_streamlit = "streamlit" in sys.modules or os.getenv("STREAMLIT_RUNNING", "false").lower() == "true"
+    
+    if automated_mode:
+        # Automated mode: Simulate realistic user behavior with preferences
+        # Default to biased selection (70% cost-efficient, 30% random) to enable learning
+        # Set DEMO_LEARNING_MODE=true to always select top-ranked (for testing ranking consistency)
+        # Otherwise, use biased selection to simulate user preferences and enable learning
+        learning_mode = os.getenv("DEMO_LEARNING_MODE", "false").lower() == "true"
+        
+        if learning_mode:
+            # Always select top-ranked strategy to demonstrate ranking consistency
+            selected_index = 0  # Rank #1
+            selection_reason = "learning mode (always select top-ranked)"
+        else:
+            # Biased selection mode: simulate user preferences (enables learning)
+            import random
+            
+            # Simulate a user who prefers cost-efficient strategies (70% of the time)
+            # This creates a learning signal: agent should learn this preference over time
+            preference_bias = 0.7  # 70% prefer cost-efficient
+            
+            # Find cost-efficient strategy (usually has "cost" or "efficient" in name)
+            cost_efficient_idx = None
+            for idx, strategy in enumerate(ranked):
+                strategy_name = strategy.get("strategy_name", "").lower()
+                if "cost" in strategy_name or "efficient" in strategy_name:
+                    cost_efficient_idx = idx
+                    break
+            
+            # Biased selection: 70% cost-efficient, 30% random
+            if cost_efficient_idx is not None and random.random() < preference_bias:
+                selected_index = cost_efficient_idx
+                selection_reason = "biased (prefers cost-efficient)"
+            else:
+                selected_index = random.randint(0, len(ranked) - 1)
+                selection_reason = "random (exploring)"
+        
+        selected_strategy = ranked[selected_index]
+        
+        # Calculate rank (1-indexed for logging)
+        rank = selected_index + 1
+        preference_score = selected_strategy.get('preference_score', 0)
+        
+        logger.info(
+            f"[Human Review] Automated mode ({selection_reason}): "
+            f"Selected '{selected_strategy['strategy_name']}' "
+            f"(ranked #{rank} by agent, preference_score: {preference_score:.3f})"
+        )
+        
+        return {
+            "user_decision": selected_index,
+            "user_feedback": f"Automated selection ({selection_reason}) for testing",
+            "current_node": "human_review"
+        }
     
     if in_streamlit:
         # In Streamlit mode, we don't block here - the dashboard will handle it

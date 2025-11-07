@@ -35,10 +35,14 @@ def preference_node(state: MedFlowState) -> Dict:
     api_client = MedFlowAPIClient()
 
     # Call preference scoring API
+    import time
+    pref_start = time.time()
     result = api_client.rank_strategies(
         user_id=state["user_id"],
         strategies=state["allocation_strategies"]
     )
+    pref_elapsed = time.time() - pref_start
+    logger.info(f"[Preference] Preference scoring completed in {pref_elapsed:.2f}s")
 
     ranked = result["ranked_strategies"]
     profile = result.get("user_profile", {})
