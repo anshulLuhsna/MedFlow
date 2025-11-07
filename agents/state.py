@@ -32,6 +32,9 @@ class MedFlowState(TypedDict):
     session_id: str
     hospital_ids: Optional[List[str]]  # Optional list of hospital IDs to process
     outbreak_id: Optional[str]  # Optional outbreak ID to use for context
+    simulation_date: Optional[str]  # Optional date (YYYY-MM-DD) for historical data simulation
+    regions: Optional[List[str]]  # Optional list of regions to filter by
+    hospital_limit: Optional[int]  # Optional limit on number of hospitals to process
 
     # MESSAGES
     messages: Annotated[list, add_messages]

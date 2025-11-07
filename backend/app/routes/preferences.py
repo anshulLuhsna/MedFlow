@@ -37,11 +37,33 @@ async def score_recommendations(
     """
     try:
         ml_core = get_ml_core()
+        
+        # Fetch past interactions from Supabase if user_id is provided
+        past_interactions = request.past_interactions
+        if request.user_id and not past_interactions:
+            try:
+                from ..database import get_supabase
+                supabase = get_supabase()
+                
+                # Fetch last 20 interactions for this user
+                result = supabase.table("user_interactions")\
+                    .select("*")\
+                    .eq("session_id", request.user_id)\
+                    .order("interaction_timestamp", desc=True)\
+                    .limit(20)\
+                    .execute()
+                
+                if result.data:
+                    past_interactions = result.data
+                    print(f"[Preferences] Retrieved {len(past_interactions)} past interactions for user {request.user_id}")
+            except Exception as db_err:
+                print(f"[Preferences] Warning: Could not fetch past interactions from DB: {db_err}")
+                # Continue without past interactions
 
         ranked = ml_core.score_recommendations(
             recommendations=request.recommendations,
             user_id=request.user_id,
-            past_interactions=request.past_interactions
+            past_interactions=past_interactions
         )
 
         return PreferenceScoreResponse(

@@ -88,6 +88,14 @@ async def detect_shortages(
         le=100,
         description="Optional limit on number of hospitals to process (max 100)"
     ),
+    hospital_ids: Optional[str] = Query(
+        None,
+        description="Optional comma-separated list of hospital IDs to process"
+    ),
+    simulation_date: Optional[str] = Query(
+        None,
+        description="Simulation date (YYYY-MM-DD) - use historical data as 'today'"
+    ),
     api_key: str = Security(verify_api_key)
 ):
     """
@@ -101,11 +109,37 @@ async def detect_shortages(
     """
     try:
         ml_core = get_ml_core()
+        
+        # Log simulation date if provided  
+        if simulation_date:
+            print(f"[Shortage API] ✅ USING SIMULATION DATE: {simulation_date}")
 
-        shortages_df = ml_core.detect_shortages(resource_type=resource_type, hospital_limit=limit)
+        # Parse hospital_ids if provided
+        hospital_ids_list = None
+        if hospital_ids:
+            hospital_ids_list = [h.strip() for h in hospital_ids.split(",") if h.strip()]
 
-        # Get summary
-        summary = ml_core.get_shortage_summary()
+        shortages_df = ml_core.detect_shortages(
+            resource_type=resource_type, 
+            hospital_limit=limit,
+            hospital_ids=hospital_ids_list,
+            simulation_date=simulation_date
+        )
+        
+        # Handle empty DataFrame case
+        if shortages_df is None or shortages_df.empty:
+            return ShortageResponse(
+                shortages=[],
+                count=0,
+                summary={
+                    "total_hospitals": 0,
+                    "shortage_hospitals": 0,
+                    "risk_levels": {}
+                }
+            )
+
+        # Get summary from already-computed shortages (avoid re-computation)
+        summary = ml_core.get_shortage_summary(shortages_df=shortages_df)
 
         return ShortageResponse(
             shortages=shortages_df.to_dict('records'),
@@ -114,9 +148,11 @@ async def detect_shortages(
         )
 
     except Exception as e:
+        import traceback
+        error_details = traceback.format_exc()
         raise HTTPException(
             status_code=500,
-            detail=f"Shortage detection failed: {str(e)}"
+            detail=f"Shortage detection failed: {str(e)}\n\nFull error:\n{error_details}"
         )
 
 
@@ -132,17 +168,23 @@ async def optimize_allocation(
     - **resource_type**: Type of resource to allocate
     - **n_strategies**: Number of strategies to generate (1-5)
     - **shortage_hospital_ids**: Optional list of hospitals with shortages
+    - **simulation_date**: Optional simulation date (YYYY-MM-DD) for historical data
 
     Returns:
         Optimal allocation strategy with transfers and costs
     """
     try:
         ml_core = get_ml_core()
+        
+        # Log simulation date if provided
+        if request.simulation_date:
+            print(f"[Optimize API] ✅ USING SIMULATION DATE: {request.simulation_date}")
 
         result = ml_core.optimize_allocation(
             resource_type=request.resource_type,
             shortage_hospital_ids=request.shortage_hospital_ids,
-            hospital_limit=request.limit
+            hospital_limit=request.limit,
+            simulation_date=request.simulation_date
         )
 
         return OptimizationResponse(
@@ -179,17 +221,25 @@ async def generate_strategies(
     Body:
     - **resource_type**: Type of resource to allocate
     - **n_strategies**: Number of strategies to generate (1-5)
+    - **simulation_date**: Optional simulation date (YYYY-MM-DD) for historical data
 
     Returns:
         Multiple ranked allocation strategies
     """
     try:
         ml_core = get_ml_core()
+        
+        # Log simulation date if provided
+        if request.simulation_date:
+            print(f"[Strategies API] ✅ USING SIMULATION DATE: {request.simulation_date}")
 
         strategies = ml_core.generate_allocation_strategies(
             resource_type=request.resource_type,
             n_strategies=request.n_strategies,
-            hospital_limit=request.limit
+            hospital_limit=request.limit,
+            hospital_ids=request.hospital_ids,
+            regions=request.regions,
+            simulation_date=request.simulation_date
         )
 
         return StrategiesResponse(

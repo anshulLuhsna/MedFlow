@@ -36,6 +36,16 @@ class AgentConfig:
     DEMO_HOSPITAL_LIMIT: int = int(os.getenv("DEMO_HOSPITAL_LIMIT", "5"))  # Limit hospitals for demo (default: 5)
     
     @classmethod
+    def get_hospital_limit(cls) -> int:
+        """
+        Get hospital limit from environment at runtime.
+        
+        This method reads from environment each time to ensure subprocess
+        environment variables are respected.
+        """
+        return int(os.getenv("DEMO_HOSPITAL_LIMIT", "5"))
+    
+    @classmethod
     def validate(cls) -> bool:
         """Validate configuration"""
         required = ["MEDFLOW_API_BASE"]
