@@ -5,10 +5,16 @@ Integration tests for ML Core
 import unittest
 import sys
 import os
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from core import MLCore
-from config import RESOURCE_TYPES
+# Add project root to path
+project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+if project_root not in sys.path:
+    sys.path.insert(0, project_root)
+
+# Import from ml_core package
+from ml_core.core import MLCore
+from ml_core.config import RESOURCE_TYPES
+import pandas as pd
 
 
 class TestMLCore(unittest.TestCase):

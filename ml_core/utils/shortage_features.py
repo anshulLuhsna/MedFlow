@@ -5,6 +5,7 @@ Engineers 20 features from raw data for shortage risk detection
 
 import pandas as pd
 import numpy as np
+from typing import Optional
 from typing import Dict, List
 from datetime import datetime, timedelta
 
@@ -13,7 +14,8 @@ def engineer_shortage_features(
     current_inventory: pd.DataFrame,
     demand_predictions: pd.DataFrame,
     admissions_history: pd.DataFrame,
-    hospital_info: pd.DataFrame
+    hospital_info: pd.DataFrame,
+    regional_inventory: Optional[pd.DataFrame] = None
 ) -> pd.DataFrame:
     """
     Engineer features for shortage detection
@@ -31,6 +33,9 @@ def engineer_shortage_features(
     Returns:
         DataFrame with hospital_id, resource_type, and 20 engineered features
     """
+    # Use regional_inventory if provided, otherwise use current_inventory for regional calculations
+    inventory_for_regional = regional_inventory if regional_inventory is not None else current_inventory
+    
     features_list = []
 
     # For each hospital-resource pair
@@ -129,9 +134,10 @@ def engineer_shortage_features(
             'predicted_demand_change': calculate_demand_change(demand),
 
             # Category 4: Regional Context (3 features)
-            'regional_avg_stock': calculate_regional_avg(current_inventory, hospital.get('region', 'unknown'), resource_type),
+            # Use regional_inventory (unfiltered) for regional calculations
+            'regional_avg_stock': calculate_regional_avg(inventory_for_regional, hospital.get('region', 'unknown'), resource_type),
             'regional_transfer_availability': calculate_transfer_availability(
-                current_inventory, hospital_info, hospital_id, hospital.get('region', 'unknown'), resource_type
+                inventory_for_regional, hospital_info, hospital_id, hospital.get('region', 'unknown'), resource_type
             ),
             'isolation_score': calculate_isolation(hospital_info, hospital_id),
 

@@ -5,7 +5,7 @@ Classifies shortage risk level based on current state and predictions
 
 import numpy as np
 import pandas as pd
-from typing import Dict, List, Tuple
+from typing import Dict, List, Tuple, Optional
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.preprocessing import LabelEncoder
 import joblib
@@ -207,37 +207,80 @@ class ShortageDetector:
         current_inventory: pd.DataFrame,
         demand_predictions: pd.DataFrame,
         admissions_history: pd.DataFrame,
-        hospital_info: pd.DataFrame
+        hospital_info: pd.DataFrame,
+        regional_inventory: Optional[pd.DataFrame] = None
     ) -> pd.DataFrame:
         """
         Detect shortages for all hospitals
         
+        Args:
+            current_inventory: Inventory for hospitals to check
+            demand_predictions: Forecasted demand
+            admissions_history: Historical admission data
+            hospital_info: Hospital metadata
+            regional_inventory: Optional unfiltered inventory for regional feature calculations
+        
         Returns:
             DataFrame with hospital_id, resource_type, risk_level, probability
         """
+        # Use regional_inventory if provided, otherwise use current_inventory for regional calculations
+        inventory_for_regional = regional_inventory if regional_inventory is not None else current_inventory
+        
         # Engineer features
         features = engineer_shortage_features(
-            current_inventory=current_inventory,
+            current_inventory=current_inventory,  # Use filtered inventory for matching
             demand_predictions=demand_predictions,
             admissions_history=admissions_history,
-            hospital_info=hospital_info
+            hospital_info=hospital_info,
+            regional_inventory=inventory_for_regional  # Use unfiltered inventory for regional calculations
         )
+        
+        # Check if we have any data after feature engineering
+        if features.empty:
+            print(f"[Shortage Detection] Warning: Feature engineering returned empty DataFrame")
+            # Return empty results
+            return pd.DataFrame(columns=['hospital_id', 'resource_type', 'risk_level', 'confidence', 'days_of_supply', 'current_stock', 'predicted_demand_7d'])
+        
+        print(f"[Shortage Detection] Feature engineering produced {len(features)} rows with columns: {features.columns.tolist()}")
+        
+        # Ensure all required features exist (fill missing with defaults)
+        for feature_name in self.feature_names:
+            if feature_name not in features.columns:
+                # Fill with reasonable defaults based on feature type
+                print(f"[Shortage Detection] Adding missing feature '{feature_name}' with default value")
+                if 'ratio' in feature_name:
+                    features[feature_name] = 1.0  # Neutral ratio
+                elif 'days' in feature_name:
+                    features[feature_name] = 7.0  # Week supply
+                elif 'trend' in feature_name or 'acceleration' in feature_name:
+                    features[feature_name] = 0.0  # No trend
+                elif 'score' in feature_name:
+                    features[feature_name] = 0.5  # Medium score
+                elif 'spike' in feature_name or 'isolation' in feature_name:
+                    features[feature_name] = 0.0  # No spike/isolation
+                else:
+                    features[feature_name] = 0.0  # Default to zero
         
         # Keep only feature columns
         X = features[self.feature_names]
         
+        # Final check
+        if X.empty:
+            print(f"[Shortage Detection] Warning: No data to predict after feature selection")
+            return pd.DataFrame(columns=['hospital_id', 'resource_type', 'risk_level', 'confidence', 'days_of_supply', 'current_stock', 'predicted_demand_7d'])
+        
         # Predict
         risk_levels, probabilities = self.predict(X, return_probabilities=True)
         
-        # Create result DataFrame
+        # Create result DataFrame (handle missing columns gracefully)
         results = pd.DataFrame({
-            'hospital_id': features['hospital_id'],
-            'resource_type': features['resource_type'],
+            'hospital_id': features.get('hospital_id', features.index if 'hospital_id' not in features.columns else features['hospital_id']),
+            'resource_type': features.get('resource_type', 'unknown' if 'resource_type' not in features.columns else features['resource_type']),
             'risk_level': risk_levels,
             'confidence': probabilities.max(axis=1),
-            'days_of_supply': features['days_of_supply'],
-            'current_stock': features['stock_level'],
-            'predicted_demand_7d': features['predicted_demand_7d']
+            'days_of_supply': features.get('days_of_supply', 7.0 if 'days_of_supply' not in features.columns else features['days_of_supply']),
+            'current_stock': features.get('stock_level', 0 if 'stock_level' not in features.columns else features['stock_level']),
+            'predicted_demand_7d': features.get('predicted_demand_7d', 0 if 'predicted_demand_7d' not in features.columns else features['predicted_demand_7d'])
         })
         
         # Add individual class probabilities

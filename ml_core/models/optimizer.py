@@ -325,13 +325,13 @@ class ResourceOptimizer:
         """
         strategies = []
         
-        # Strategy 1: Minimize cost (cost-efficient)
+        # Strategy 1: Minimize cost (cost-efficient) - INCREASED weight differences
         strategy1 = self.optimize_allocation(
             shortage_hospitals, surplus_hospitals, hospital_info, resource_type,
             objective_weights={
                 'minimize_shortage': 0.5,
-                'minimize_cost': 1.0,
-                'maximize_coverage': 0.3,
+                'minimize_cost': 2.0,  # Increased from 1.0 to emphasize cost minimization
+                'maximize_coverage': 0.2,  # Decreased from 0.3 to reduce coverage emphasis
                 'fairness': 0.3
             }
         )
@@ -343,13 +343,13 @@ class ResourceOptimizer:
             strategy1['coverage_score'] = 0.7
             strategies.append(strategy1)
         
-        # Strategy 2: Maximize coverage (help most hospitals)
+        # Strategy 2: Maximize coverage (help most hospitals) - INCREASED weight differences
         strategy2 = self.optimize_allocation(
             shortage_hospitals, surplus_hospitals, hospital_info, resource_type,
             objective_weights={
                 'minimize_shortage': 1.0,
-                'minimize_cost': 0.3,
-                'maximize_coverage': 1.0,
+                'minimize_cost': 0.2,  # Decreased from 0.3 to reduce cost emphasis
+                'maximize_coverage': 2.0,  # Increased from 1.0 to emphasize coverage maximization
                 'fairness': 0.8
             }
         )
@@ -388,6 +388,18 @@ class ResourceOptimizer:
             )
         
         strategies.sort(key=lambda x: x['overall_score'], reverse=True)
+        
+        # Check if strategies are identical and log warning
+        if len(strategies) > 1:
+            first_strategy = strategies[0]
+            for i, strategy in enumerate(strategies[1:], 1):
+                if (strategy.get('summary', {}).get('total_cost') == first_strategy.get('summary', {}).get('total_cost') and
+                    strategy.get('summary', {}).get('hospitals_helped') == first_strategy.get('summary', {}).get('hospitals_helped') and
+                    strategy.get('summary', {}).get('shortage_reduction') == first_strategy.get('summary', {}).get('shortage_reduction')):
+                    print(f"[WARNING] Strategy {i+1} ({strategy.get('strategy_name')}) is identical to Strategy 1 ({first_strategy.get('strategy_name')})")
+                    print(f"  Both have: Cost=${strategy.get('summary', {}).get('total_cost')}, "
+                          f"Hospitals={strategy.get('summary', {}).get('hospitals_helped')}, "
+                          f"Reduction={strategy.get('summary', {}).get('shortage_reduction')}%")
         
         return strategies
     
