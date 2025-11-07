@@ -13,6 +13,10 @@ langchain-core>=0.3.0
 langchain-openai>=0.2.0
 langchain-groq>=0.2.0
 
+# CrewAI - Alternative Agent Framework
+crewai>=0.80.0
+crewai-tools>=0.1.0
+
 # State Persistence & Checkpointing
 langgraph-checkpoint>=1.0.0
 langgraph-checkpoint-sqlite>=1.0.0

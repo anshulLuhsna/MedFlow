@@ -41,11 +41,23 @@ class OptimizeRequest(BaseModel):
         None,
         description="Optional list of hospitals with shortages"
     )
+    hospital_ids: Optional[List[str]] = Field(
+        None,
+        description="Optional list of hospital IDs to process (filters to only these hospitals)"
+    )
+    regions: Optional[List[str]] = Field(
+        None,
+        description="Optional list of regions to filter hospitals by (for outbreak scenarios)"
+    )
     limit: Optional[int] = Field(
         None,
         ge=1,
         le=100,
         description="Optional limit on number of hospitals to process (max 100)"
+    )
+    simulation_date: Optional[str] = Field(
+        None,
+        description="Simulation date (YYYY-MM-DD) - use historical data as 'today'"
     )
 
 

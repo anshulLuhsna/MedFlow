@@ -11,7 +11,7 @@ from contextlib import asynccontextmanager
 import time
 
 from .config import get_settings
-from .routes import health, predictions, preferences, hospitals, outbreaks
+from .routes import health, predictions, preferences, hospitals, outbreaks, interactions
 
 # Get settings
 settings = get_settings()
@@ -119,6 +119,7 @@ app.include_router(predictions.router)
 app.include_router(preferences.router)
 app.include_router(hospitals.router)
 app.include_router(outbreaks.router)
+app.include_router(interactions.router)
 
 
 # ============================================

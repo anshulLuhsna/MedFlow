@@ -113,6 +113,57 @@ async def list_outbreaks(
         )
 
 
+@router.get("/outbreaks/active", response_model=ActiveOutbreakResponse)
+async def get_active_outbreaks(
+    region: Optional[str] = Query(
+        None,
+        description="Filter by affected region"
+    ),
+    simulation_date: Optional[str] = Query(
+        None,
+        description="Simulation date (YYYY-MM-DD) - check for active outbreaks as of this date"
+    ),
+    api_key: str = Security(verify_api_key)
+):
+    """
+    Get currently active outbreaks/events
+    
+    Query Parameters:
+    - **region**: Optional filter by affected region
+    - **simulation_date**: Optional simulation date (YYYY-MM-DD) to check for active outbreaks
+    
+    Returns:
+        List of currently active outbreaks (where simulation_date or current date is between start_date and end_date)
+    """
+    try:
+        ml_core = get_ml_core()
+        
+        # Log simulation date if provided
+        if simulation_date:
+            print(f"[Outbreaks API] ✅ CHECKING ACTIVE OUTBREAKS AS OF: {simulation_date}")
+        
+        # Fetch active events only (as of simulation_date if provided)
+        events_df = ml_core.data_loader.get_events(
+            region=region,
+            active_only=True,
+            as_of_date=simulation_date
+        )
+        
+        active_outbreaks = events_df.to_dict('records') if not events_df.empty else []
+        
+        return ActiveOutbreakResponse(
+            active_outbreaks=active_outbreaks,
+            count=len(active_outbreaks),
+            timestamp=datetime.now().isoformat()
+        )
+    
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to fetch active outbreaks: {str(e)}"
+        )
+
+
 @router.get("/outbreaks/{outbreak_id}", response_model=OutbreakResponse)
 async def get_outbreak(
     outbreak_id: str,
@@ -136,11 +187,24 @@ async def get_outbreak(
         if events_df.empty:
             raise HTTPException(
                 status_code=404,
-                detail=f"Outbreak {outbreak_id} not found"
+                detail=f"Outbreak {outbreak_id} not found (no events in database)"
+            )
+        
+        # Check what column name is used for ID (could be 'id' or something else)
+        id_column = None
+        for col in ['id', 'event_id', 'outbreak_id']:
+            if col in events_df.columns:
+                id_column = col
+                break
+        
+        if id_column is None:
+            raise HTTPException(
+                status_code=500,
+                detail=f"Cannot find ID column in events. Available columns: {list(events_df.columns)}"
             )
         
         # Filter by ID
-        outbreak_df = events_df[events_df['id'] == outbreak_id]
+        outbreak_df = events_df[events_df[id_column] == outbreak_id]
         
         if outbreak_df.empty:
             raise HTTPException(
@@ -158,50 +222,11 @@ async def get_outbreak(
     except HTTPException:
         raise
     except Exception as e:
+        import traceback
+        error_details = traceback.format_exc()
         raise HTTPException(
             status_code=500,
-            detail=f"Failed to fetch outbreak: {str(e)}"
-        )
-
-
-@router.get("/outbreaks/active", response_model=ActiveOutbreakResponse)
-async def get_active_outbreaks(
-    region: Optional[str] = Query(
-        None,
-        description="Filter by affected region"
-    ),
-    api_key: str = Security(verify_api_key)
-):
-    """
-    Get currently active outbreaks/events
-    
-    Query Parameters:
-    - **region**: Optional filter by affected region
-    
-    Returns:
-        List of currently active outbreaks (where current date is between start_date and end_date)
-    """
-    try:
-        ml_core = get_ml_core()
-        
-        # Fetch active events only
-        events_df = ml_core.data_loader.get_events(
-            region=region,
-            active_only=True
-        )
-        
-        active_outbreaks = events_df.to_dict('records') if not events_df.empty else []
-        
-        return ActiveOutbreakResponse(
-            active_outbreaks=active_outbreaks,
-            count=len(active_outbreaks),
-            timestamp=datetime.now().isoformat()
-        )
-    
-    except Exception as e:
-        raise HTTPException(
-            status_code=500,
-            detail=f"Failed to fetch active outbreaks: {str(e)}"
+            detail=f"Failed to fetch outbreak: {str(e)}\n\nFull error:\n{error_details}"
         )
 
 

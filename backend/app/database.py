@@ -30,9 +30,12 @@ def get_supabase() -> Client:
     return create_client(settings.supabase_url, settings.supabase_key)
 
 
+@lru_cache()
 def get_ml_core():
     """
-    Get ML Core instance with Supabase client
+    Get ML Core instance with Supabase client (singleton pattern)
+    
+    Models are loaded once and reused across all requests for performance.
 
     Returns:
         MLCore instance
@@ -50,4 +53,7 @@ def get_ml_core():
     from ml_core.core import MLCore
 
     supabase = get_supabase()
-    return MLCore(supabase_client=supabase)
+    print("🔧 Initializing ML Core (models will be loaded once and reused)...")
+    ml_core = MLCore(supabase_client=supabase)
+    print("✅ ML Core initialized - models are now cached in memory")
+    return ml_core
