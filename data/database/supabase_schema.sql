@@ -140,6 +140,7 @@ CREATE INDEX idx_allocations_date ON allocations(allocation_date);
 -- ============================================
 CREATE TABLE user_interactions (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    user_id VARCHAR(100),
     session_id VARCHAR(100),
     user_query TEXT NOT NULL,
     context JSONB,
@@ -153,6 +154,7 @@ CREATE TABLE user_interactions (
     interaction_timestamp TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
 
+CREATE INDEX idx_interactions_user ON user_interactions(user_id);
 CREATE INDEX idx_interactions_session ON user_interactions(session_id);
 CREATE INDEX idx_interactions_timestamp ON user_interactions(interaction_timestamp);
 CREATE INDEX idx_interactions_framework ON user_interactions(framework_used);

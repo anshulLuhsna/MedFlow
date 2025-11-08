@@ -315,7 +315,18 @@ class PreferenceLearner:
         selected_features = []
         
         for interaction in interactions:
-            recs = interaction['recommendations']
+            # Safely get recommendations - handle both list and JSON string formats
+            recs = interaction.get('recommendations', [])
+            if isinstance(recs, str):
+                import json
+                try:
+                    recs = json.loads(recs)
+                except:
+                    continue
+            
+            if not isinstance(recs, list) or not recs:
+                continue
+            
             selected_idx = interaction.get('selected_recommendation_index', 0)
             
             if selected_idx < len(recs):
@@ -379,17 +390,25 @@ class PreferenceLearner:
         # Extract preferences
         preferences = self.extract_implicit_preferences(interactions)
         
-        # Calculate statistics
-        response_times = [
-            i.get('response_time_seconds', 0)
-            for i in interactions
-        ]
+        # Calculate statistics (safely handle None values from database)
+        response_times = []
+        for i in interactions:
+            rt = i.get('response_time_seconds')
+            if rt is not None:
+                response_times.append(rt)
         
-        feedback_ratings = [
-            i.get('feedback_rating', 0)
-            for i in interactions
-            if i.get('feedback_rating') is not None
-        ]
+        feedback_ratings = []
+        for i in interactions:
+            fr = i.get('feedback_rating')
+            if fr is not None:
+                feedback_ratings.append(fr)
+        
+        # Safely count recommendations
+        total_recommendations = 0
+        for i in interactions:
+            recs = i.get('recommendations', [])
+            if isinstance(recs, list):
+                total_recommendations += len(recs)
         
         profile = {
             'user_id': user_id,
@@ -398,9 +417,7 @@ class PreferenceLearner:
             'statistics': {
                 'avg_response_time': np.mean(response_times) if response_times else 0,
                 'avg_feedback_rating': np.mean(feedback_ratings) if feedback_ratings else 0,
-                'total_recommendations_viewed': sum([
-                    len(i['recommendations']) for i in interactions
-                ])
+                'total_recommendations_viewed': total_recommendations
             },
             'initialized': True,
             'last_updated': datetime.now().isoformat()
@@ -498,8 +515,11 @@ class PreferenceLearner:
         if not recommendations:
             return []
 
-        # 1. Random Forest scoring
-        rf_scores = self._score_with_rf(recommendations)
+        # Check if user has interaction history
+        user_has_history = user_profile is not None and user_profile.get('interaction_count', 0) > 0
+
+        # 1. Random Forest scoring (with cold start detection)
+        rf_scores = self._score_with_rf(recommendations, user_has_history=user_has_history)
 
         # 2. LLM-based scoring (if enabled)
         llm_scores = self._score_with_llm(user_profile, recommendations) if self.use_llm else None
@@ -550,8 +570,12 @@ class PreferenceLearner:
 
         return recommendations
 
-    def _score_with_rf(self, recommendations: List[Dict]) -> List[float]:
+    def _score_with_rf(self, recommendations: List[Dict], user_has_history: bool = True) -> List[float]:
         """Score recommendations using Random Forest"""
+        # If user has no history, return neutral scores (true cold start)
+        if not user_has_history:
+            return [0.5] * len(recommendations)
+        
         if self.model is None:
             # No model trained yet, return neutral scores
             return [0.5] * len(recommendations)

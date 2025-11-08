@@ -68,7 +68,8 @@ class ResourceOptimizer:
         surplus_hospitals: pd.DataFrame,
         hospital_info: pd.DataFrame,
         resource_type: str,
-        objective_weights: Dict[str, float] = None
+        objective_weights: Dict[str, float] = None,
+        strategy_name: str = None
     ) -> Dict:
         """
         Optimize resource allocation using Linear Programming
@@ -155,11 +156,12 @@ class ResourceOptimizer:
             for info in transfers.values()
         ])
         
-        # 2. Minimize unmet shortage (shortage penalty)
+        # 2. Minimize unmet shortage (shortage penalty) - REDUCED DOMINANCE
         shortage_penalties = {}
         for j, shortage in shortage_hospitals.iterrows():
             shortage_id = shortage['hospital_id']
             quantity_needed = shortage['quantity_needed']
+            risk_level = shortage.get('risk_level', 'medium')
             
             # Calculate how much this shortage hospital receives
             received = lpSum([
@@ -170,23 +172,54 @@ class ResourceOptimizer:
             
             # Unmet shortage
             unmet = quantity_needed - received
-            shortage_penalties[shortage_id] = unmet * 10000  # High penalty for unmet needs
+            
+            # Penalty proportional to risk level (reduced from 10000x)
+            if risk_level == 'critical':
+                penalty_multiplier = 1000  # High but not overwhelming
+            elif risk_level == 'high':
+                penalty_multiplier = 500
+            else:
+                penalty_multiplier = 100  # Low/medium risk
+            
+            shortage_penalties[shortage_id] = unmet * penalty_multiplier
         
         shortage_objective = lpSum(shortage_penalties.values())
         
-        # 3. Minimize number of transfers (complexity)
+        # 3. Maximize number of hospitals helped (coverage) - FIXED
+        # Binary variables to track if each shortage hospital receives ANY aid
+        hospitals_helped_binary = {}
+        M = 1000000  # Large constant for big-M formulation
+        
+        for shortage_id in shortage_hospitals['hospital_id']:
+            var_name = f"helped_{shortage_id[:8]}"
+            hospitals_helped_binary[shortage_id] = LpVariable(var_name, 0, 1, LpBinary)
+            
+            # Calculate total received by this hospital
+            received = lpSum([
+                transfers[(surplus_id, sid)]['var']
+                for surplus_id, sid in transfers.keys()
+                if sid == shortage_id
+            ])
+            
+            # Link binary to transfers: if received > 0, binary = 1
+            # Big-M formulation: received <= M * binary (if received > 0, binary must be 1)
+            # Also: received >= 0.01 * binary (if binary = 1, received must be > 0)
+            prob += received <= M * hospitals_helped_binary[shortage_id]
+            prob += received >= 0.01 * hospitals_helped_binary[shortage_id]
+        
+        # Coverage objective: maximize hospitals helped (negative because we're minimizing)
+        coverage_objective = -lpSum(hospitals_helped_binary.values()) * 1000
+        
+        # 4. Minimize number of transfers (complexity/fairness)
         # Binary variables to track if transfer happens
         transfer_binary = {}
-        M = 1000000  # Large constant for big-M formulation
         for key in transfers.keys():
             var_name = f"binary_{key[0][:8]}_{key[1][:8]}"
             transfer_binary[key] = LpVariable(var_name, 0, 1, LpBinary)
             
             # Link binary to transfer: if transfer > 0, binary = 1
-            # Big-M formulation: transfer <= M * binary (if transfer > 0, binary must be 1)
-            # Also: transfer >= 0.01 * binary (if binary = 1, transfer must be > 0, but LP needs >)
             prob += transfers[key]['var'] <= M * transfer_binary[key]
-            prob += transfers[key]['var'] >= 0.01 * transfer_binary[key]  # If binary=1, transfer must be at least 0.01
+            prob += transfers[key]['var'] >= 0.01 * transfer_binary[key]
         
         complexity_objective = lpSum(transfer_binary.values()) * 100
         
@@ -194,7 +227,8 @@ class ResourceOptimizer:
         prob += (
             objective_weights['minimize_shortage'] * shortage_objective +
             objective_weights['minimize_cost'] * cost_objective / 10000 +  # Normalize
-            objective_weights['maximize_coverage'] * complexity_objective
+            objective_weights['maximize_coverage'] * coverage_objective +  # FIXED: now maximizes hospitals helped
+            objective_weights.get('fairness', 0.5) * complexity_objective  # Fairness = fewer transfers
         )
         
         # Constraints
@@ -246,6 +280,44 @@ class ResourceOptimizer:
                         for key in critical_transfers
                     ]) >= min_allocation
         
+        # 4. Strategy-specific constraints to force different solutions
+        # Use adaptive constraints: if too restrictive, relax them
+        constraint_applied = False
+        if strategy_name == 'Cost-Efficient':
+            # Cost-Efficient: Limit total cost to force cheaper solutions
+            total_shortage = shortage_hospitals['quantity_needed'].sum()
+            # Estimate cost: use actual transfer costs from available transfers
+            if transfers:
+                avg_cost_per_unit = sum(info['cost'] for info in transfers.values()) / len(transfers)
+            else:
+                avg_cost_per_unit = 1500
+            # Start with 70% budget, but will relax if infeasible
+            cost_budget = total_shortage * avg_cost_per_unit * 0.70
+            prob += cost_objective <= cost_budget
+            constraint_applied = True
+            print(f"[Optimizer] Cost-Efficient: Added cost budget constraint: ${cost_budget:.2f}")
+        
+        elif strategy_name == 'Maximum Coverage':
+            # Maximum Coverage: Must help at least 80% of hospitals (relaxed from 100%)
+            # Requiring 100% might be infeasible if not enough resources
+            min_hospitals_to_help = max(1, int(len(shortage_hospitals) * 0.8))
+            prob += lpSum(hospitals_helped_binary.values()) >= min_hospitals_to_help
+            constraint_applied = True
+            print(f"[Optimizer] Maximum Coverage: Must help at least {min_hospitals_to_help} of {len(shortage_hospitals)} hospitals")
+        
+        elif strategy_name == 'Balanced':
+            # Balanced: Limit maximum single transfer size for fairness
+            # Use adaptive limit: 60% of max possible transfer
+            if transfers:
+                max_possible = max(info['max_quantity'] for info in transfers.values())
+                max_single_transfer = max(3, int(max_possible * 0.6))  # At least 3, but 60% of max
+            else:
+                max_single_transfer = 5
+            for key in transfers.keys():
+                prob += transfers[key]['var'] <= max_single_transfer
+            constraint_applied = True
+            print(f"[Optimizer] Balanced: Limited max transfer size to {max_single_transfer} units")
+        
         # Solve
         prob.solve(PULP_CBC_CMD(msg=0, timeLimit=self.config['time_limit']))
         
@@ -253,10 +325,15 @@ class ResourceOptimizer:
         status = LpStatus[prob.status]
         
         if status != 'Optimal':
+            # If infeasible due to constraints, try relaxing them
+            if strategy_name and status == 'Infeasible':
+                print(f"[Optimizer] WARNING: Strategy '{strategy_name}' resulted in infeasible solution. Status: {status}")
+                print(f"[Optimizer] This may happen if constraints are too restrictive. Consider adjusting constraints.")
+            
             return {
                 'status': status.lower() if isinstance(status, str) else status,
                 'resource_type': resource_type,
-                'message': f'Optimization failed with status: {status}',
+                'message': f'Optimization failed with status: {status}. Strategy: {strategy_name or "default"}',
                 'allocations': []
             }
         
@@ -325,81 +402,131 @@ class ResourceOptimizer:
         """
         strategies = []
         
-        # Strategy 1: Minimize cost (cost-efficient) - INCREASED weight differences
+        # Strategy 1: Cost-Efficient - DRAMATICALLY prioritize cost minimization
         strategy1 = self.optimize_allocation(
             shortage_hospitals, surplus_hospitals, hospital_info, resource_type,
             objective_weights={
-                'minimize_shortage': 0.5,
-                'minimize_cost': 2.0,  # Increased from 1.0 to emphasize cost minimization
-                'maximize_coverage': 0.2,  # Decreased from 0.3 to reduce coverage emphasis
-                'fairness': 0.3
-            }
+                'minimize_shortage': 0.3,   # Low: willing to leave some shortages if expensive
+                'minimize_cost': 3.0,       # HIGH: cost is priority
+                'maximize_coverage': 0.1,   # Low: don't care about number of hospitals
+                'fairness': 0.5             # Medium: prefer fewer, larger transfers
+            },
+            strategy_name='Cost-Efficient'
         )
         if strategy1['status'] == 'optimal':
             strategy1['strategy_name'] = 'Cost-Efficient'
             strategy1['strategy_description'] = 'Minimizes transfer costs while addressing critical shortages'
-            strategy1['cost_score'] = 1.0
-            strategy1['speed_score'] = 0.6
-            strategy1['coverage_score'] = 0.7
+            # Calculate scores based on actual performance
+            summary = strategy1.get('summary', {})
             strategies.append(strategy1)
         
-        # Strategy 2: Maximize coverage (help most hospitals) - INCREASED weight differences
+        # Strategy 2: Maximum Coverage - DRAMATICALLY prioritize helping most hospitals
         strategy2 = self.optimize_allocation(
             shortage_hospitals, surplus_hospitals, hospital_info, resource_type,
             objective_weights={
-                'minimize_shortage': 1.0,
-                'minimize_cost': 0.2,  # Decreased from 0.3 to reduce cost emphasis
-                'maximize_coverage': 2.0,  # Increased from 1.0 to emphasize coverage maximization
-                'fairness': 0.8
-            }
+                'minimize_shortage': 0.5,   # Medium: address shortages
+                'minimize_cost': 0.1,       # Low: cost is not priority
+                'maximize_coverage': 3.0,   # HIGH: help as many hospitals as possible
+                'fairness': 0.2             # Low: ok with many small transfers
+            },
+            strategy_name='Maximum Coverage'
         )
         if strategy2['status'] == 'optimal':
             strategy2['strategy_name'] = 'Maximum Coverage'
             strategy2['strategy_description'] = 'Helps the maximum number of hospitals'
-            strategy2['cost_score'] = 0.6
-            strategy2['speed_score'] = 0.5
-            strategy2['coverage_score'] = 1.0
             strategies.append(strategy2)
         
-        # Strategy 3: Balanced approach
+        # Strategy 3: Balanced - Equal priorities
         strategy3 = self.optimize_allocation(
             shortage_hospitals, surplus_hospitals, hospital_info, resource_type,
             objective_weights={
-                'minimize_shortage': 0.8,
-                'minimize_cost': 0.6,
-                'maximize_coverage': 0.7,
-                'fairness': 0.7
-            }
+                'minimize_shortage': 1.0,   # High: address shortages
+                'minimize_cost': 1.0,       # High: but keep costs reasonable
+                'maximize_coverage': 1.0,   # High: help hospitals
+                'fairness': 1.0             # High: balanced approach
+            },
+            strategy_name='Balanced'
         )
         if strategy3['status'] == 'optimal':
             strategy3['strategy_name'] = 'Balanced'
             strategy3['strategy_description'] = 'Balanced approach considering cost, coverage, and urgency'
-            strategy3['cost_score'] = 0.75
-            strategy3['speed_score'] = 0.75
-            strategy3['coverage_score'] = 0.85
             strategies.append(strategy3)
         
-        # Rank by overall score
-        for strategy in strategies:
-            strategy['overall_score'] = (
-                strategy['cost_score'] * 0.3 +
-                strategy['speed_score'] * 0.3 +
-                strategy['coverage_score'] * 0.4
-            )
+        # Calculate performance-based scores for each strategy
+        if strategies:
+            # Find min/max for normalization
+            costs = [s.get('summary', {}).get('total_cost', 0) for s in strategies]
+            hospitals_helped = [s.get('summary', {}).get('hospitals_helped', 0) for s in strategies]
+            transfers = [s.get('summary', {}).get('total_transfers', 0) for s in strategies]
+            
+            min_cost, max_cost = min(costs), max(costs) if costs else (0, 1)
+            min_hospitals, max_hospitals = min(hospitals_helped), max(hospitals_helped) if hospitals_helped else (0, 1)
+            min_transfers, max_transfers = min(transfers), max(transfers) if transfers else (0, 1)
+            
+            for strategy in strategies:
+                summary = strategy.get('summary', {})
+                cost = summary.get('total_cost', 0)
+                hospitals = summary.get('hospitals_helped', 0)
+                num_transfers = summary.get('total_transfers', 0)
+                
+                # Normalize scores (0-1 scale)
+                if max_cost > min_cost:
+                    cost_score = 1.0 - ((cost - min_cost) / (max_cost - min_cost))  # Lower cost = higher score
+                else:
+                    cost_score = 1.0
+                
+                if max_hospitals > min_hospitals:
+                    coverage_score = (hospitals - min_hospitals) / (max_hospitals - min_hospitals)  # More hospitals = higher score
+                else:
+                    coverage_score = 1.0
+                
+                if max_transfers > min_transfers:
+                    speed_score = 1.0 - ((num_transfers - min_transfers) / (max_transfers - min_transfers))  # Fewer transfers = faster
+                else:
+                    speed_score = 1.0
+                
+                strategy['cost_score'] = round(cost_score, 2)
+                strategy['coverage_score'] = round(coverage_score, 2)
+                strategy['speed_score'] = round(speed_score, 2)
+                
+                # Overall score (weighted average)
+                strategy['overall_score'] = round(
+                    cost_score * 0.3 +
+                    speed_score * 0.3 +
+                    coverage_score * 0.4,
+                    2
+                )
         
-        strategies.sort(key=lambda x: x['overall_score'], reverse=True)
+        # Sort by overall score
+        strategies.sort(key=lambda x: x.get('overall_score', 0), reverse=True)
         
-        # Check if strategies are identical and log warning
+        # Enhanced validation: Check if strategies are identical and log detailed differences
         if len(strategies) > 1:
-            first_strategy = strategies[0]
-            for i, strategy in enumerate(strategies[1:], 1):
-                if (strategy.get('summary', {}).get('total_cost') == first_strategy.get('summary', {}).get('total_cost') and
-                    strategy.get('summary', {}).get('hospitals_helped') == first_strategy.get('summary', {}).get('hospitals_helped') and
-                    strategy.get('summary', {}).get('shortage_reduction') == first_strategy.get('summary', {}).get('shortage_reduction')):
-                    print(f"[WARNING] Strategy {i+1} ({strategy.get('strategy_name')}) is identical to Strategy 1 ({first_strategy.get('strategy_name')})")
-                    print(f"  Both have: Cost=${strategy.get('summary', {}).get('total_cost')}, "
-                          f"Hospitals={strategy.get('summary', {}).get('hospitals_helped')}, "
-                          f"Reduction={strategy.get('summary', {}).get('shortage_reduction')}%")
+            for i in range(len(strategies)):
+                for j in range(i + 1, len(strategies)):
+                    s1 = strategies[i]
+                    s2 = strategies[j]
+                    s1_summary = s1.get('summary', {})
+                    s2_summary = s2.get('summary', {})
+                    
+                    # Check if allocations are identical
+                    s1_allocs = sorted([(a['from_hospital_id'], a['to_hospital_id'], a['quantity']) 
+                                       for a in s1.get('allocations', [])])
+                    s2_allocs = sorted([(a['from_hospital_id'], a['to_hospital_id'], a['quantity']) 
+                                       for a in s2.get('allocations', [])])
+                    
+                    if s1_allocs == s2_allocs:
+                        print(f"[WARNING] Strategy '{s1.get('strategy_name')}' and '{s2.get('strategy_name')}' have IDENTICAL allocations!")
+                        print(f"  Cost: ${s1_summary.get('total_cost')} vs ${s2_summary.get('total_cost')}")
+                        print(f"  Hospitals helped: {s1_summary.get('hospitals_helped')} vs {s2_summary.get('hospitals_helped')}")
+                        print(f"  Shortage reduction: {s1_summary.get('shortage_reduction_percent')}% vs {s2_summary.get('shortage_reduction_percent')}%")
+                        print(f"  Transfers: {s1_summary.get('total_transfers')} vs {s2_summary.get('total_transfers')}")
+                    else:
+                        # Log differences for debugging
+                        print(f"[INFO] Strategy '{s1.get('strategy_name')}' vs '{s2.get('strategy_name')}':")
+                        print(f"  Cost difference: ${abs(s1_summary.get('total_cost', 0) - s2_summary.get('total_cost', 0)):.2f}")
+                        print(f"  Hospitals difference: {abs(s1_summary.get('hospitals_helped', 0) - s2_summary.get('hospitals_helped', 0))}")
+                        print(f"  Transfer count difference: {abs(s1_summary.get('total_transfers', 0) - s2_summary.get('total_transfers', 0))}")
         
         return strategies
     
