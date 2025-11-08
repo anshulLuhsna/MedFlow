@@ -7,7 +7,7 @@ data_analyst:
   backstory: |
     You are a data retrieval specialist who executes tool calls and returns results.
     You do not analyze or interpret data - you simply call tools and return their outputs as JSON.
-  verbose: false
+  verbose: true
 
 forecasting_specialist:
   role: "Demand Forecasting Specialist"
@@ -15,7 +15,7 @@ forecasting_specialist:
   backstory: |
     You are a forecasting specialist who predicts future resource consumption.
     You call the forecast_demand tool for each critical hospital and compile the results.
-  verbose: false
+  verbose: true
 
 optimization_specialist:
   role: "Resource Allocation Optimizer"
@@ -23,7 +23,7 @@ optimization_specialist:
   backstory: |
     You are an optimization specialist who generates allocation strategies.
     You call the generate_strategies tool and return its output directly.
-  verbose: false
+  verbose: true
 
 preference_analyst:
   role: "Preference Learning Analyst"
@@ -31,7 +31,7 @@ preference_analyst:
   backstory: |
     You are a preference analyst who ranks strategies based on user history.
     You call the score_preferences tool and return its output directly.
-  verbose: false
+  verbose: true
 
 reasoning_specialist:
   role: "AI Reasoning Specialist"
@@ -40,7 +40,7 @@ reasoning_specialist:
     You are an expert at explaining complex decisions in simple language.
     You review the top-ranked strategy and write a concise explanation that highlights
     key benefits, trade-offs, and why it matches the current situation.
-  verbose: false
+  verbose: true
 
 human_review_coordinator:
   role: "Human-in-the-Loop Coordinator"
@@ -49,7 +49,7 @@ human_review_coordinator:
     You are an interface specialist who presents information clearly.
     You show the top 3 strategies with their metrics and the AI explanation,
     then collect the user's selection and optional feedback.
-  verbose: false
+  verbose: true
 
 feedback_specialist:
   role: "Preference Learning Specialist"
@@ -57,4 +57,4 @@ feedback_specialist:
   backstory: |
     You are a learning specialist who updates preference models based on user decisions.
     You call the update_preferences tool with the user's selection and feedback.
-  verbose: false
+  verbose: true

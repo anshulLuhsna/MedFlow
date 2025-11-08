@@ -80,13 +80,28 @@ def setup_logging():
         module_logger.addHandler(file_handler)
         module_logger.propagate = False  # Prevent duplicate logs
     
-    # Configure CrewAI's logger
+    # Configure CrewAI's logger - Enable DEBUG for verbose output
     crewai_logger = logging.getLogger('crewai')
-    crewai_logger.setLevel(logging.INFO)
+    crewai_logger.setLevel(logging.DEBUG)  # Changed to DEBUG for verbose logging
     if not any(isinstance(h, RotatingFileHandler) and h.baseFilename == str(log_file) 
                for h in crewai_logger.handlers):
         crewai_logger.addHandler(console_handler)
         crewai_logger.addHandler(file_handler)
+    
+    # Also enable verbose logging for agent execution
+    agent_logger = logging.getLogger('crewai.agent')
+    agent_logger.setLevel(logging.DEBUG)
+    if not any(isinstance(h, RotatingFileHandler) and h.baseFilename == str(log_file) 
+               for h in agent_logger.handlers):
+        agent_logger.addHandler(console_handler)
+        agent_logger.addHandler(file_handler)
+    
+    task_logger = logging.getLogger('crewai.task')
+    task_logger.setLevel(logging.DEBUG)
+    if not any(isinstance(h, RotatingFileHandler) and h.baseFilename == str(log_file) 
+               for h in task_logger.handlers):
+        task_logger.addHandler(console_handler)
+        task_logger.addHandler(file_handler)
     
     # Configure tools logger
     tools_logger = logging.getLogger('agents.crewai.tools')
@@ -400,8 +415,40 @@ def run_workflow_until_review(
             "simulation_date": simulation_date
         }
         
-        logger.info("[CrewAI] Running workflow until review point...")
-        result = review_crew.kickoff(inputs=inputs)
+        logger.info(f"[CrewAI] Starting workflow with {len(tasks_until_review)} tasks")
+        logger.info(f"[CrewAI] Inputs: resource_type={resource_type}, user_id={user_id}, simulation_date={simulation_date}")
+        logger.info(f"[CrewAI] Task list: {[t.description[:50] for t in tasks_until_review]}")
+        
+        import time
+        start_time = time.time()
+        logger.info("[CrewAI] Calling crew.kickoff()...")
+        logger.info(f"[CrewAI] Crew verbose mode: {Config.VERBOSE}")
+        logger.info(f"[CrewAI] Crew agents: {[a.role for a in review_crew.agents]}")
+        
+        # Log each task before execution
+        for i, task in enumerate(tasks_until_review):
+            logger.info(f"[CrewAI] Task {i+1}/{len(tasks_until_review)}: {task.description[:80]}")
+            logger.info(f"[CrewAI]   Agent: {task.agent.role if hasattr(task, 'agent') else 'Unknown'}")
+            logger.info(f"[CrewAI]   Max iterations: {task.agent.max_iter if hasattr(task, 'agent') and hasattr(task.agent, 'max_iter') else 'N/A'}")
+        
+        try:
+            result = review_crew.kickoff(inputs=inputs)
+            
+            elapsed = time.time() - start_time
+            logger.info(f"[CrewAI] ✅ Workflow completed in {elapsed:.2f} seconds")
+            logger.info(f"[CrewAI] Result type: {type(result)}")
+            
+            # Log task execution status
+            if hasattr(review_crew, 'tasks'):
+                for i, task in enumerate(review_crew.tasks):
+                    status = getattr(task, 'status', 'unknown')
+                    logger.info(f"[CrewAI] Task {i+1} status: {status}")
+                    if hasattr(task, 'output') and task.output:
+                        logger.debug(f"[CrewAI] Task {i+1} output type: {type(task.output)}")
+        except Exception as e:
+            elapsed = time.time() - start_time
+            logger.error(f"[CrewAI] ❌ Workflow failed after {elapsed:.2f} seconds: {e}", exc_info=True)
+            raise
         
         # Extract tasks from the crew after execution
         # The tasks will have their outputs populated after kickoff

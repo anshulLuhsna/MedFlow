@@ -48,7 +48,7 @@ async def score_recommendations(
                 # Fetch last 20 interactions for this user
                 result = supabase.table("user_interactions")\
                     .select("*")\
-                    .eq("session_id", request.user_id)\
+                    .eq("user_id", request.user_id)\
                     .order("interaction_timestamp", desc=True)\
                     .limit(20)\
                     .execute()
@@ -56,6 +56,7 @@ async def score_recommendations(
                 if result.data:
                     past_interactions = result.data
                     print(f"[Preferences] Retrieved {len(past_interactions)} past interactions for user {request.user_id}")
+                    print(f"[Preferences] Sample interaction keys: {list(past_interactions[0].keys()) if past_interactions else 'none'}")
             except Exception as db_err:
                 print(f"[Preferences] Warning: Could not fetch past interactions from DB: {db_err}")
                 # Continue without past interactions
@@ -73,6 +74,10 @@ async def score_recommendations(
         )
 
     except Exception as e:
+        import traceback
+        error_trace = traceback.format_exc()
+        print(f"[Preferences] ERROR: {str(e)}")
+        print(f"[Preferences] TRACEBACK:\n{error_trace}")
         raise HTTPException(
             status_code=500,
             detail=f"Preference scoring failed: {str(e)}"

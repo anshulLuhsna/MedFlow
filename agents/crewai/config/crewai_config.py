@@ -21,7 +21,7 @@ class Config:
     API_TIMEOUT = 120.0
     
     # CrewAI Settings
-    VERBOSE = False  # Reduced verbosity for performance
+    VERBOSE = True  # Enable verbose logging for debugging
     MEMORY = False  # Disable to prevent context confusion
     PLANNING = False  # Disable to prevent overthinking
     
