@@ -308,6 +308,9 @@ The shortage detection system uses a **Random Forest classifier** to predict sho
 ### Quick Start
 
 ```bash
+cd backend
+uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+
 # Train the shortage detector
 python ml_core/training/train_shortage_model.py
 

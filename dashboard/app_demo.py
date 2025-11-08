@@ -256,58 +256,215 @@ def run_workflow_until_review(state: MedFlowState) -> tuple[MedFlowState, str]:
     
     try:
         if framework == "crewai" and CREWAI_AVAILABLE:
-            # Use CrewAI implementation
-            crew_inputs = {
-                "resource_type": state.get("resource_type", "ventilators"),
-                "user_id": state.get("user_id", "default_user"),
-                "simulation_date": state.get("simulation_date"),
-                "hospital_ids": state.get("hospital_ids"),
-                "outbreak_id": state.get("outbreak_id"),
-                "regions": state.get("regions"),
-                "hospital_limit": state.get("hospital_limit", 5)
-            }
+            # Use CrewAI implementation - run until review (excludes review task)
+            from agents.crewai.crew.medflow_crew import run_workflow_until_review as crewai_run_until_review
             
-            crew = MedFlowCrew().crew()
-            result_obj = crew.kickoff(inputs=crew_inputs)
+            workflow_result = crewai_run_until_review(
+                resource_type=state.get("resource_type", "ventilators"),
+                user_id=state.get("user_id", "default_user"),
+                simulation_date=state.get("simulation_date")
+            )
+            
+            if not workflow_result.get("success"):
+                raise Exception(workflow_result.get("error", "Unknown error"))
+            
+            result_obj = workflow_result.get("result")
             
             # Convert CrewAI result to MedFlowState format
             result = state.copy()
-            result["workflow_status"] = "completed"
+            result["workflow_status"] = "in_progress"  # Not completed yet, waiting for review
             
-            # Extract data from CrewAI output
-            if result_obj.tasks:
-                for task in result_obj.tasks:
+            # Extract data from CrewAI task outputs
+            # Tasks are in order: analyze_shortages, forecast_demand, generate_strategies, 
+            # rank_strategies, explain_recommendation
+            tasks_to_process = []
+            
+            # Check if result_obj has tasks attribute (Crew result object)
+            if result_obj and hasattr(result_obj, 'tasks'):
+                tasks_to_process = result_obj.tasks
+                logger.info(f"[CrewAI] Found {len(tasks_to_process)} tasks in result object")
+            # Check if result_obj is the crew object itself with tasks
+            elif result_obj and hasattr(result_obj, 'crew') and hasattr(result_obj.crew, 'tasks'):
+                tasks_to_process = result_obj.crew.tasks
+                logger.info(f"[CrewAI] Found {len(tasks_to_process)} tasks in crew object")
+            # Check if workflow_result has tasks (returned separately)
+            elif 'tasks' in workflow_result:
+                tasks_to_process = workflow_result['tasks']
+                logger.info(f"[CrewAI] Found {len(tasks_to_process)} tasks in workflow_result")
+            
+            if tasks_to_process:
+                for i, task in enumerate(tasks_to_process):
+                    task_name = getattr(task, 'description', f'task_{i}') or f'task_{i}'
+                    logger.info(f"[CrewAI] Processing task {i}: {task_name}")
+                    
                     if hasattr(task, 'output') and task.output:
                         try:
                             import json
-                            if isinstance(task.output, str):
-                                output_data = json.loads(task.output)
-                            else:
-                                output_data = task.output
+                            output_data = None
                             
-                            # Map task outputs to state
+                            # Try pydantic first (structured output)
+                            if hasattr(task.output, 'pydantic'):
+                                pydantic_obj = task.output.pydantic
+                                if pydantic_obj:
+                                    if hasattr(pydantic_obj, 'model_dump'):
+                                        output_data = pydantic_obj.model_dump()
+                                    elif hasattr(pydantic_obj, 'dict'):
+                                        output_data = pydantic_obj.dict()
+                                    else:
+                                        output_data = {}
+                                    logger.info(f"[CrewAI] Task {i} output: pydantic format")
+                            
+                            # Try raw string
+                            if output_data is None and hasattr(task.output, 'raw'):
+                                output_str = task.output.raw
+                                if output_str:
+                                    try:
+                                        output_data = json.loads(output_str) if isinstance(output_str, str) else output_str
+                                        logger.info(f"[CrewAI] Task {i} output: raw format")
+                                    except:
+                                        output_data = {}
+                            
+                            # Try direct string
+                            if output_data is None and isinstance(task.output, str):
+                                try:
+                                    output_data = json.loads(task.output)
+                                    logger.info(f"[CrewAI] Task {i} output: string format")
+                                except:
+                                    output_data = {}
+                            
+                            # Try dict conversion
+                            if output_data is None:
+                                if hasattr(task.output, 'model_dump'):
+                                    output_data = task.output.model_dump()
+                                elif hasattr(task.output, 'dict'):
+                                    output_data = task.output.dict()
+                                else:
+                                    try:
+                                        output_data = json.loads(json.dumps(task.output))
+                                    except:
+                                        output_data = {}
+                            
+                            if not output_data:
+                                logger.warning(f"[CrewAI] Task {i} output is empty")
+                                continue
+                            
+                            # Map task outputs to state based on task index and content
                             if isinstance(output_data, dict):
-                                if 'shortage_count' in output_data:
-                                    result["shortage_count"] = output_data.get("shortage_count", 0)
-                                    result["shortage_hospitals"] = output_data.get("shortage_hospitals", [])
-                                    result["active_outbreaks"] = output_data.get("active_outbreaks", [])
-                                    result["analysis_summary"] = output_data.get("analysis_summary", "")
-                                elif 'ranked_strategies' in output_data:
-                                    result["ranked_strategies"] = output_data.get("ranked_strategies", [])
-                                    result["preference_profile"] = output_data.get("preference_profile", {})
-                                elif 'explanation' in output_data:
-                                    result["explanation"] = output_data.get("explanation", "")
-                                    result["final_recommendation"] = output_data.get("final_recommendation", {})
-                                elif 'selected_strategy_index' in output_data:
-                                    result["user_decision"] = output_data.get("selected_strategy_index")
-                                    result["user_feedback"] = output_data.get("user_feedback")
+                                # Task 0: Shortage analysis
+                                if i == 0:
+                                    if 'shortage_count' in output_data:
+                                        result["shortage_count"] = output_data.get("shortage_count", 0)
+                                        result["shortage_hospitals"] = output_data.get("shortage_hospitals", [])
+                                        result["active_outbreaks"] = output_data.get("active_outbreaks", [])
+                                        result["analysis_summary"] = output_data.get("analysis_summary", "")
+                                        logger.info(f"[CrewAI] Task 0: Found {result['shortage_count']} shortages")
+                                
+                                # Task 3: Ranked strategies (index 3)
+                                elif i == 3:
+                                    if 'ranked_strategies' in output_data:
+                                        ranked = output_data.get("ranked_strategies", [])
+                                        # Convert RankedStrategy objects to dicts if needed
+                                        if ranked:
+                                            ranked_list = []
+                                            for r in ranked:
+                                                if hasattr(r, 'model_dump'):
+                                                    ranked_list.append(r.model_dump())
+                                                elif hasattr(r, 'dict'):
+                                                    ranked_list.append(r.dict())
+                                                elif isinstance(r, dict):
+                                                    ranked_list.append(r)
+                                                else:
+                                                    ranked_list.append(json.loads(json.dumps(r)))
+                                            result["ranked_strategies"] = ranked_list
+                                            logger.info(f"[CrewAI] Task 3: Found {len(ranked_list)} ranked strategies")
+                                        else:
+                                            result["ranked_strategies"] = []
+                                        
+                                        # Extract preference profile
+                                        pref_profile = output_data.get("preference_profile", {})
+                                        if hasattr(pref_profile, 'model_dump'):
+                                            pref_profile = pref_profile.model_dump()
+                                        elif hasattr(pref_profile, 'dict'):
+                                            pref_profile = pref_profile.dict()
+                                        result["preference_profile"] = pref_profile if isinstance(pref_profile, dict) else {}
+                                
+                                # Task 4: Explanation (index 4)
+                                elif i == 4:
+                                    if 'explanation' in output_data:
+                                        result["explanation"] = output_data.get("explanation", "")
+                                        final_rec = output_data.get("final_recommendation", {})
+                                        if hasattr(final_rec, 'model_dump'):
+                                            final_rec = final_rec.model_dump()
+                                        elif hasattr(final_rec, 'dict'):
+                                            final_rec = final_rec.dict()
+                                        elif isinstance(final_rec, dict) and 'key_metrics' in final_rec:
+                                            # Convert key_metrics if it's a Pydantic model
+                                            key_metrics = final_rec.get('key_metrics', {})
+                                            if hasattr(key_metrics, 'model_dump'):
+                                                final_rec['key_metrics'] = key_metrics.model_dump()
+                                            elif hasattr(key_metrics, 'dict'):
+                                                final_rec['key_metrics'] = key_metrics.dict()
+                                        result["final_recommendation"] = final_rec if isinstance(final_rec, dict) else {}
+                                        logger.info(f"[CrewAI] Task 4: Found explanation")
                         except Exception as e:
-                            logger.warning(f"Error parsing CrewAI task output: {e}")
+                            logger.error(f"[CrewAI] Error parsing task {i} output: {e}", exc_info=True)
+            else:
+                # If no tasks found, try to extract from final output directly
+                logger.warning(f"[CrewAI] No tasks found in result_obj, trying to extract from final output: {type(result_obj)}")
+                
+                # Try to extract data from final output if it's a Pydantic model or dict
+                try:
+                    import json
+                    final_output = None
+                    
+                    # Check if result_obj is a Pydantic model
+                    if hasattr(result_obj, 'model_dump'):
+                        final_output = result_obj.model_dump()
+                    elif hasattr(result_obj, 'dict'):
+                        final_output = result_obj.dict()
+                    elif isinstance(result_obj, dict):
+                        final_output = result_obj
+                    elif hasattr(result_obj, '__dict__'):
+                        # Try to convert object to dict
+                        final_output = {k: v for k, v in result_obj.__dict__.items() if not k.startswith('_')}
+                    
+                    if final_output:
+                        logger.info(f"[CrewAI] Extracted final output: {list(final_output.keys())}")
+                        
+                        # Extract explanation (from task 4)
+                        if 'explanation' in final_output:
+                            result["explanation"] = final_output.get("explanation", "")
+                            logger.info("[CrewAI] Found explanation in final output")
+                        
+                        # Extract final_recommendation
+                        if 'final_recommendation' in final_output:
+                            final_rec = final_output.get("final_recommendation", {})
+                            if hasattr(final_rec, 'model_dump'):
+                                final_rec = final_rec.model_dump()
+                            elif hasattr(final_rec, 'dict'):
+                                final_rec = final_rec.dict()
+                            result["final_recommendation"] = final_rec if isinstance(final_rec, dict) else {}
+                            logger.info("[CrewAI] Found final_recommendation in final output")
+                        
+                        # Note: ranked_strategies won't be in final output (that's from task 3)
+                        # We need to get it from the actual task outputs
+                except Exception as e:
+                    logger.error(f"[CrewAI] Error extracting from final output: {e}", exc_info=True)
             
-            # Check if we need human review
-            if (result.get("user_decision") is None and 
-                result.get("ranked_strategies") and 
-                len(result.get("ranked_strategies", [])) > 0):
+            # Always return human_review if we have ranked strategies (even if extraction had issues)
+            # This ensures the UI can display results even if parsing wasn't perfect
+            has_ranked = result.get("ranked_strategies") and len(result.get("ranked_strategies", [])) > 0
+            has_explanation = result.get("explanation")
+            
+            logger.info(f"[CrewAI] Workflow result check: ranked_strategies={has_ranked}, explanation={bool(has_explanation)}")
+            
+            if result.get("user_decision") is None and (has_ranked or has_explanation):
+                logger.info("[CrewAI] Returning state for human review")
+                return result, "human_review"
+            
+            # If we don't have ranked strategies, log warning but still try to show what we have
+            if not has_ranked:
+                logger.warning("[CrewAI] No ranked strategies found, but workflow completed. Returning for review anyway.")
                 return result, "human_review"
             
             return result, "END"
@@ -600,15 +757,20 @@ def render_daily_simulation_tab():
             for i, strategy in enumerate(ranked_strategies[:3]):
                 summary = strategy.get('summary', {})
                 with st.expander(f"**{i+1}. {strategy.get('strategy_name', 'Unknown')}**", expanded=(i==0)):
-                    col1, col2, col3, col4 = st.columns(4)
+                    col1, col2, col3, col4, col5 = st.columns(5)
                     with col1:
                         st.metric("Cost", f"${summary.get('total_cost', 0):,.0f}")
                     with col2:
-                        st.metric("Hospitals Helped", summary.get('hospitals_helped', 0))
+                        st.metric("Hospitals Helped", summary.get('hospitals_helped', 0), 
+                                 help="Number of unique hospitals receiving aid")
                     with col3:
+                        total_transfers = summary.get('total_transfers', len(strategy.get('allocations', [])))
+                        st.metric("Total Transfers", total_transfers,
+                                 help="Number of transfer operations (may include multiple transfers to same hospital)")
+                    with col4:
                         shortage_reduction = summary.get('shortage_reduction', summary.get('shortage_reduction_percent', 0))
                         st.metric("Shortage Reduction", f"{shortage_reduction:.1f}%")
-                    with col4:
+                    with col5:
                         st.metric("Preference Score", f"{strategy.get('preference_score', 0):.3f}")
                     
                     # Show allocation details
@@ -672,9 +834,71 @@ def render_daily_simulation_tab():
                 # Process feedback
                 with st.spinner("Processing selection..."):
                     try:
-                        updated_state = feedback_node(state)
-                        config = {"configurable": {"thread_id": state["user_id"]}}
-                        final_state = medflow_graph.invoke(updated_state, config=config)
+                        framework = st.session_state.get("framework", "langgraph")
+                        
+                        if framework == "crewai" and CREWAI_AVAILABLE:
+                            # Use CrewAI continue workflow
+                            from agents.crewai.crew.medflow_crew import continue_workflow_after_review
+                            
+                            workflow_result = continue_workflow_after_review(
+                                resource_type=state.get("resource_type", "ventilators"),
+                                user_id=state.get("user_id", "default_user"),
+                                simulation_date=state.get("simulation_date"),
+                                selected_strategy_index=selected_index,
+                                user_feedback=feedback if feedback.strip() else None,
+                                ranked_strategies=ranked_strategies
+                            )
+                            
+                            if workflow_result.get("success"):
+                                # Update state with final results
+                                final_state = state.copy()
+                                final_state["workflow_status"] = "completed"
+                                final_state["feedback_stored"] = True
+                                
+                                # Extract final results if available
+                                result_obj = workflow_result.get("result")
+                                if result_obj and hasattr(result_obj, 'tasks'):
+                                    for task in result_obj.tasks:
+                                        if hasattr(task, 'output') and task.output:
+                                            try:
+                                                import json
+                                                if hasattr(task.output, 'raw'):
+                                                    output_str = task.output.raw
+                                                elif isinstance(task.output, str):
+                                                    output_str = task.output
+                                                else:
+                                                    output_str = json.dumps(task.output)
+                                                
+                                                output_data = json.loads(output_str) if isinstance(output_str, str) else output_str
+                                                if isinstance(output_data, dict) and 'preferences_updated' in output_data:
+                                                    final_state["feedback_stored"] = output_data.get("preferences_updated", False)
+                                            except:
+                                                pass
+                            else:
+                                raise Exception(workflow_result.get("error", "Failed to update preferences"))
+                        else:
+                            # Use LangGraph implementation
+                            updated_state = feedback_node(state)
+                            config = {"configurable": {"thread_id": state["user_id"]}}
+                            final_state = medflow_graph.invoke(updated_state, config=config)
+                        
+                        # CRITICAL: Set final_recommendation to the selected strategy for Learning Analytics
+                        # Learning Analytics expects: state.final_recommendation.summary.total_cost
+                        if ranked_strategies and 0 <= selected_index < len(ranked_strategies):
+                            selected_strategy = ranked_strategies[selected_index]
+                            # Ensure it's a dict (not a Pydantic model)
+                            if hasattr(selected_strategy, 'model_dump'):
+                                selected_strategy = selected_strategy.model_dump()
+                            elif hasattr(selected_strategy, 'dict'):
+                                selected_strategy = selected_strategy.dict()
+                            elif not isinstance(selected_strategy, dict):
+                                selected_strategy = dict(selected_strategy) if selected_strategy else {}
+                            
+                            # Set as final_recommendation with proper structure
+                            final_state["final_recommendation"] = selected_strategy.copy()
+                            # Ensure summary exists (it should from the strategy)
+                            if "summary" not in final_state["final_recommendation"]:
+                                final_state["final_recommendation"]["summary"] = {}
                         
                         # Store in history
                         st.session_state.simulation_history.append({
@@ -751,14 +975,19 @@ def render_daily_simulation_tab():
             
             if final_rec:
                 summary = final_rec.get('summary', {})
-                col1, col2, col3, col4 = st.columns(4)
+                col1, col2, col3, col4, col5 = st.columns(5)
                 with col1:
                     st.metric("Strategy", final_rec.get('strategy_name', 'Unknown'))
                 with col2:
                     st.metric("Cost", f"${summary.get('total_cost', 0):,.0f}")
                 with col3:
-                    st.metric("Hospitals Helped", summary.get('hospitals_helped', 0))
+                    st.metric("Hospitals Helped", summary.get('hospitals_helped', 0),
+                             help="Number of unique hospitals receiving aid")
                 with col4:
+                    total_transfers = summary.get('total_transfers', len(final_rec.get('allocations', [])))
+                    st.metric("Total Transfers", total_transfers,
+                             help="Number of transfer operations")
+                with col5:
                     shortage_reduction = summary.get('shortage_reduction', summary.get('shortage_reduction_percent', 0))
                     st.metric("Shortage Reduction", f"{shortage_reduction:.1f}%")
                 
@@ -817,23 +1046,81 @@ def render_learning_analytics_tab():
         st.info("No simulation data yet. Run some simulations first!")
         return
     
-    # Extract metrics
-    dates = [h["date"] for h in st.session_state.simulation_history]
-    costs = [h["state"].get("final_recommendation", {}).get("summary", {}).get("total_cost", 0) 
-             for h in st.session_state.simulation_history]
-    hospitals_helped = [h["state"].get("final_recommendation", {}).get("summary", {}).get("hospitals_helped", 0) 
-                        for h in st.session_state.simulation_history]
-    selected_strategies = [h["selected_strategy"] for h in st.session_state.simulation_history]
-    outbreak_active = [h["outbreak_active"] for h in st.session_state.simulation_history]
+    # Extract metrics with defensive checks
+    dates = []
+    costs = []
+    hospitals_helped = []
+    selected_strategies = []
+    outbreak_active = []
     
-    # Create dataframe
-    df = pd.DataFrame({
-        "Date": pd.to_datetime(dates),
-        "Cost": costs,
-        "Hospitals Helped": hospitals_helped,
-        "Selected Strategy": selected_strategies,
-        "Outbreak Active": outbreak_active
-    })
+    for h in st.session_state.simulation_history:
+        dates.append(h.get("date", "Unknown"))
+        
+        # Extract cost - try multiple paths
+        state = h.get("state", {})
+        final_rec = state.get("final_recommendation", {})
+        summary = final_rec.get("summary", {})
+        cost = summary.get("total_cost", 0)
+        # Fallback: try to get from ranked_strategies if final_recommendation is empty
+        if cost == 0 and state.get("ranked_strategies"):
+            ranked = state.get("ranked_strategies", [])
+            selected_idx = h.get("selected_strategy", 0)
+            if 0 <= selected_idx < len(ranked):
+                selected = ranked[selected_idx]
+                if isinstance(selected, dict):
+                    cost = selected.get("summary", {}).get("total_cost", 0)
+        costs.append(float(cost) if cost else 0)
+        
+        # Extract hospitals_helped - try multiple paths
+        hospitals = summary.get("hospitals_helped", 0)
+        # Fallback: try to get from ranked_strategies if final_recommendation is empty
+        if hospitals == 0 and state.get("ranked_strategies"):
+            ranked = state.get("ranked_strategies", [])
+            selected_idx = h.get("selected_strategy", 0)
+            if 0 <= selected_idx < len(ranked):
+                selected = ranked[selected_idx]
+                if isinstance(selected, dict):
+                    hospitals = selected.get("summary", {}).get("hospitals_helped", 0)
+        hospitals_helped.append(float(hospitals) if hospitals else 0)
+        
+        selected_strategies.append(h.get("selected_strategy", 0))
+        outbreak_active.append(h.get("outbreak_active", False))
+    
+    # Create dataframe with error handling for dates
+    try:
+        df = pd.DataFrame({
+            "Date": pd.to_datetime(dates, errors='coerce'),
+            "Cost": costs,
+            "Hospitals Helped": hospitals_helped,
+            "Selected Strategy": selected_strategies,
+            "Outbreak Active": outbreak_active
+        })
+        # Remove rows with invalid dates
+        df = df.dropna(subset=['Date'])
+    except Exception as e:
+        st.error(f"Error creating analytics dataframe: {e}")
+        st.info("Debug info:")
+        st.json({
+            "history_count": len(st.session_state.simulation_history),
+            "sample_entry": st.session_state.simulation_history[0] if st.session_state.simulation_history else None
+        })
+        return
+    
+    # Check if we have valid data
+    if len(df) == 0:
+        st.warning("⚠️ No valid data points found in simulation history. Please run some simulations first.")
+        return
+    
+    # Check if all costs/hospitals are zero (might indicate data extraction issue)
+    if df["Cost"].sum() == 0 and df["Hospitals Helped"].sum() == 0:
+        st.warning("⚠️ All metrics are zero. This might indicate a data extraction issue.")
+        with st.expander("🔍 Debug Information", expanded=False):
+            st.json({
+                "history_count": len(st.session_state.simulation_history),
+                "sample_entry_keys": list(st.session_state.simulation_history[0].keys()) if st.session_state.simulation_history else [],
+                "sample_state_keys": list(st.session_state.simulation_history[0].get("state", {}).keys()) if st.session_state.simulation_history else [],
+                "sample_final_rec": st.session_state.simulation_history[0].get("state", {}).get("final_recommendation", {}) if st.session_state.simulation_history else {}
+            })
     
     # Cost trend
     st.subheader("💰 Cost Trend Over Time")
@@ -1035,7 +1322,9 @@ def render_traces_tab():
                 state = entry["state"]
                 st.write(f"**Session ID:** {state.get('session_id', 'N/A')}")
                 st.write(f"**Status:** {state.get('workflow_status', 'N/A')}")
-                st.write(f"**Execution Time:** {state.get('execution_time_seconds', 0):.1f}s")
+                exec_time = state.get('execution_time_seconds')
+                exec_time_str = f"{exec_time:.1f}s" if exec_time is not None else "N/A"
+                st.write(f"**Execution Time:** {exec_time_str}")
                 
                 if state.get("error"):
                     st.error(f"Error: {state['error']}")
