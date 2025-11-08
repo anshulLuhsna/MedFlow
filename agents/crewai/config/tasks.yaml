@@ -1,0 +1,151 @@
+# MedFlow CrewAI Tasks Configuration
+# Clear, directive task definitions to prevent agent confusion
+
+analyze_shortages_task:
+  description: |
+    Call the analyze_shortages_and_outbreaks tool with:
+    - resource_type="{resource_type}"
+    - simulation_date="{simulation_date}" (if provided, otherwise omit)
+    
+    The tool will return JSON with both shortage data and outbreak information.
+    Return this JSON output immediately - do not add analysis or commentary.
+  expected_output: |
+    JSON object with fields:
+    - shortage_count: integer
+    - shortage_hospitals: array of hospital objects
+    - active_outbreaks: array of outbreak objects
+    - affected_regions: array of strings
+    - analysis_summary: string
+  agent: data_analyst
+
+forecast_demand_task:
+  description: |
+    Review the shortage_hospitals from the previous task.
+    For each hospital with risk_level "critical" or "high":
+    1. Call forecast_demand tool with:
+       - hospital_id=<hospital_id>
+       - resource_type="{resource_type}"
+       - simulation_date="{simulation_date}" (if provided, otherwise omit)
+    2. Collect all forecast results
+    
+    Return a JSON object mapping each hospital_id to its forecast data.
+  expected_output: |
+    JSON object with structure:
+    {{
+      "forecasts": {{
+        "<hospital_id>": {{
+          "hospital_name": "string",
+          "predicted_consumption_7d": float,
+          "predicted_consumption_14d": float,
+          "confidence_score": float,
+          "forecast_details": "string"
+        }}
+      }},
+      "forecast_summary": "string describing overall forecast results"
+    }}
+  agent: forecasting_specialist
+  context:
+    - analyze_shortages_task
+
+generate_strategies_task:
+  description: |
+    Call the generate_strategies tool with:
+    - resource_type="{resource_type}"
+    - n_strategies=3
+    - simulation_date="{simulation_date}" (if provided, otherwise omit)
+    
+    The tool will generate 3 strategies: Cost-Efficient, Maximum Coverage, and Balanced.
+    Return the tool's JSON output immediately.
+  expected_output: |
+    JSON object with fields:
+    - strategies: array of 3 strategy objects
+    - strategy_count: integer (should be 3)
+  agent: optimization_specialist
+  context:
+    - forecast_demand_task
+
+rank_strategies_task:
+  description: |
+    Extract the strategies array from the previous task.
+    Call the score_preferences tool with:
+    - user_id="{user_id}"
+    - strategies=<the strategies array>
+    
+    The tool will rank strategies by preference score.
+    Return the tool's JSON output immediately.
+  expected_output: |
+    JSON object with fields:
+    - ranked_strategies: array of strategies sorted by preference_score (highest first)
+    - preference_profile: object with user preference information
+  agent: preference_analyst
+  context:
+    - generate_strategies_task
+
+explain_recommendation_task:
+  description: |
+    Review the top-ranked strategy (first in ranked_strategies array).
+    Write a clear, concise explanation (200-300 words) that covers:
+    
+    1. Why this strategy is recommended (key strengths)
+    2. What it accomplishes (hospitals helped, shortage reduction %, total cost)
+    3. Key trade-offs compared to other options
+    4. How it addresses the current shortage situation
+    
+    Write in professional but accessible language. Avoid technical jargon.
+  expected_output: |
+    JSON object with fields:
+    - explanation: string (200-300 words explaining the recommendation)
+    - reasoning_chain: string (brief summary of key decision factors)
+    - final_recommendation: object with strategy_name and key_metrics
+  agent: reasoning_specialist
+  context:
+    - rank_strategies_task
+
+review_strategies_task:
+  description: |
+    Present the top 3 ranked strategies to the user:
+    
+    For each strategy, show:
+    - Strategy name
+    - Key metrics (hospitals helped, total cost, shortage reduction %)
+    - Preference score
+    
+    Also display the AI explanation from the previous task.
+    
+    Ask the user to:
+    1. Select one strategy by index (0, 1, or 2)
+    2. Optionally provide feedback on their choice
+    
+    Return the user's decision as JSON.
+  expected_output: |
+    JSON object with fields:
+    - selected_strategy_index: integer (0, 1, or 2)
+    - user_feedback: string or null
+    - decision_timestamp: ISO 8601 timestamp
+  agent: human_review_coordinator
+  context:
+    - explain_recommendation_task
+
+update_preferences_task:
+  description: |
+    Call the update_preferences tool with:
+    - user_id="{user_id}"
+    - interaction=<parse the following JSON string: {interaction_json}>
+    
+    The interaction_json variable contains a JSON string with the interaction data in the correct format:
+    - selected_recommendation_index: integer (0, 1, or 2) - the user's selected strategy index
+    - recommendations: array of ranked strategy objects - all strategies shown to the user
+    - timestamp: ISO 8601 timestamp string
+    - feedback_text: string or null - optional user feedback
+    - context: object with resource_type and simulation_date
+    
+    Parse the interaction_json string to get the interaction dictionary, then call the tool with user_id and interaction.
+    
+    Return the tool's JSON output confirming the update.
+  expected_output: |
+    JSON object with fields:
+    - preferences_updated: boolean
+    - allocation_stored: boolean
+    - interaction_logged: boolean
+    - summary: string confirmation message
+  agent: feedback_specialist

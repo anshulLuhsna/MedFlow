@@ -73,11 +73,8 @@ class MedFlowAPIClient:
         if simulation_date:
             params["simulation_date"] = simulation_date
 
-        # AGGRESSIVE DEBUG: Log params with error level
-        logger.error(f"[API Client] ⚠️ get_shortages params: {params}")
-        logger.error(f"[API Client]   simulation_date in params: {params.get('simulation_date')}")
-        print(f"[API Client ERROR] Final params dict: {params}")
-        
+        # Log params for debugging
+        logger.info(f"[API Client] get_shortages params: {params}")
         logger.debug(f"GET /api/v1/shortages with params: {params}")
         response = self.client.get("/api/v1/shortages", params=params)
         response.raise_for_status()
@@ -94,11 +91,8 @@ class MedFlowAPIClient:
         if simulation_date:
             params["simulation_date"] = simulation_date
         
-        # AGGRESSIVE DEBUG: Log params with error level
-        logger.error(f"[API Client] ⚠️ get_active_outbreaks params: {params}")
-        logger.error(f"[API Client]   simulation_date in params: {params.get('simulation_date')}")
-        print(f"[API Client ERROR] get_active_outbreaks params: {params}")
-        
+        # Log params for debugging
+        logger.info(f"[API Client] get_active_outbreaks params: {params}")
         logger.debug(f"GET /api/v1/outbreaks/active params={params}")
         response = self.client.get("/api/v1/outbreaks/active", params=params)
         response.raise_for_status()
@@ -125,7 +119,8 @@ class MedFlowAPIClient:
         self,
         hospital_id: str,
         resource_type: str,
-        days_ahead: int = 14
+        days_ahead: int = 14,
+        simulation_date: Optional[str] = None
     ) -> Dict:
         """Predict future demand using LSTM"""
         payload = {
@@ -133,8 +128,10 @@ class MedFlowAPIClient:
             "resource_type": resource_type,
             "days_ahead": days_ahead
         }
+        if simulation_date:
+            payload["simulation_date"] = simulation_date
 
-        logger.debug(f"POST /api/v1/predict/demand for {hospital_id}")
+        logger.debug(f"POST /api/v1/predict/demand for {hospital_id} (simulation_date={simulation_date})")
         response = self.client.post("/api/v1/predict/demand", json=payload)
         response.raise_for_status()
         return response.json()
@@ -167,11 +164,8 @@ class MedFlowAPIClient:
         if simulation_date:
             payload["simulation_date"] = simulation_date
 
-        # AGGRESSIVE DEBUG: Log payload with error level
-        logger.error(f"[API Client] ⚠️ generate_strategies payload: {payload}")
-        logger.error(f"[API Client]   simulation_date in payload: {payload.get('simulation_date')}")
-        print(f"[API Client ERROR] generate_strategies payload: {payload}")
-
+        # Log payload for debugging
+        logger.info(f"[API Client] generate_strategies payload: {payload}")
         logger.debug(f"POST /api/v1/strategies for {resource_type}")
         response = self.client.post("/api/v1/strategies", json=payload, timeout=120.0)
         response.raise_for_status()
