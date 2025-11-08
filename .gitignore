@@ -14,3 +14,8 @@ ml_core/evaluation_results/
 
 # Model checkpoints (optional - uncomment if you don't want to commit models)
 # ml_core/saved_models/
+
+/qdrant_storage/
+/reports/
+/scripts/
+/dashboard/reports/
