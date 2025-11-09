@@ -76,8 +76,8 @@ load_dotenv(override=True)
 
 # Configure page
 st.set_page_config(
-    page_title="MedFlow AI - Video Demo",
-    page_icon="🏥",
+    page_title="MedFlow",
+    page_icon="",
     layout="wide",
     initial_sidebar_state="expanded"
 )
@@ -119,7 +119,7 @@ def initialize_session_state():
         "forecast_data": None,
         "workflow_results": {},
         "simulation_history": [],
-        "current_date": None
+        "current_date": date(2024, 6, 15)  # Default to outbreak start date
     }
     
     for key, value in defaults.items():
@@ -208,31 +208,40 @@ def get_forecast_data(hospital_ids: List[str], resource_type: str, simulation_da
                 simulation_date=simulation_date
             )
             
-            forecast = result.get("forecast", {})
-            historical = result.get("historical", [])
+            # Updated to match actual API response structure
+            predictions = result.get("predictions", {})
+            if not predictions:
+                logger.warning(f"No predictions data for {hospital_id}")
+                continue
             
-            # Process historical data
-            for day_data in historical:
+            predicted_demand = predictions.get("predicted_demand", [])
+            forecast_dates = predictions.get("forecast_dates", [])
+            
+            # Process forecast data (14-day predictions)
+            for i, pred in enumerate(predicted_demand):
+                if i < len(forecast_dates):
+                    forecasts.append({
+                        "hospital_id": hospital_id,
+                        "hospital_name": get_hospital_name(hospital_id),
+                        "date": forecast_dates[i],
+                        "consumption": pred,
+                        "type": "forecast"
+                    })
+            
+            # Add current stock as a data point
+            current_stock = predictions.get("current_stock")
+            if current_stock is not None and forecast_dates:
                 forecasts.append({
                     "hospital_id": hospital_id,
                     "hospital_name": get_hospital_name(hospital_id),
-                    "date": day_data.get("date"),
-                    "consumption": day_data.get("consumption", 0),
+                    "date": forecast_dates[0] if forecast_dates else None,
+                    "consumption": current_stock,
                     "type": "historical"
                 })
-            
-            # Process forecast data
-            predicted = forecast.get("predicted_consumption_14d", [])
-            for i, pred in enumerate(predicted):
-                forecasts.append({
-                    "hospital_id": hospital_id,
-                    "hospital_name": get_hospital_name(hospital_id),
-                    "date": forecast.get("forecast_dates", [])[i] if i < len(forecast.get("forecast_dates", [])) else None,
-                    "consumption": pred,
-                    "type": "forecast"
-                })
+                
         except Exception as e:
             logger.warning(f"Error fetching forecast for {hospital_id}: {e}")
+            logger.exception(e)
     
     return pd.DataFrame(forecasts)
 
@@ -249,8 +258,16 @@ def get_qdrant_similar_cases(interaction: Dict, user_id: Optional[str] = None, l
         logger.warning(f"Error querying Qdrant: {e}")
         return []
 
-def visualize_workflow_graph(state: MedFlowState) -> go.Figure:
-    """Create LangGraph workflow visualization"""
+def safe_get_state(state: Any, key: str, default: Any = None) -> Any:
+    """Safely get value from state (handles both dict and CrewOutput objects)"""
+    if isinstance(state, dict):
+        return state.get(key, default)
+    else:
+        # CrewAI CrewOutput object - use getattr
+        return getattr(state, key, default)
+
+def visualize_workflow_graph(state: Any) -> go.Figure:
+    """Create workflow visualization (supports both LangGraph and CrewAI)"""
     # Define nodes and edges
     nodes = [
         "Data Analyst",
@@ -264,8 +281,14 @@ def visualize_workflow_graph(state: MedFlowState) -> go.Figure:
     
     # Determine node states from workflow state
     node_states = {}
-    current_node = state.get("current_node", None)
-    workflow_status = state.get("workflow_status", "pending")
+    current_node = safe_get_state(state, "current_node", None)
+    workflow_status = safe_get_state(state, "workflow_status", "pending")
+    
+    # For CrewAI, check if we have tasks completed
+    if hasattr(state, 'tasks') and state.tasks:
+        # Count completed tasks
+        completed_count = sum(1 for task in state.tasks if hasattr(task, 'status') and task.status == 'completed')
+        workflow_status = "completed" if completed_count == len(state.tasks) else "in_progress"
     
     # Color mapping: Green (completed), Yellow (in progress), Gray (pending)
     if workflow_status == "completed":
@@ -335,8 +358,15 @@ def visualize_workflow_graph(state: MedFlowState) -> go.Figure:
             arrowcolor="#1f77b4"
         )
     
+    # Determine title based on framework
+    title = "Workflow Execution"
+    if hasattr(state, 'tasks'):
+        title = "CrewAI Workflow Execution"
+    else:
+        title = "LangGraph Workflow Execution"
+    
     fig.update_layout(
-        title="LangGraph Workflow Execution",
+        title=title,
         xaxis=dict(showgrid=False, showticklabels=False, range=[-0.5, 1.5]),
         yaxis=dict(showgrid=False, showticklabels=False, range=[-0.1, 1.1]),
         height=500,
@@ -371,42 +401,6 @@ def render_capacity_dashboard():
         st.metric("Critical Alerts", critical_count)
     
     st.divider()
-    
-    # Regional Resource Heatmap
-    st.subheader("📊 Regional Resource Distribution")
-    
-    if capacity_data["regional_data"]:
-        # Prepare heatmap data
-        regions = list(capacity_data["regional_data"].keys())
-        resource_types_list = [resource_type]
-        
-        heatmap_data = []
-        for region in regions:
-            shortages = capacity_data["regional_data"][region]["shortages"]
-            # Normalize to 0-1 scale for heatmap
-            heatmap_data.append([shortages / max(1, capacity_data["total_shortages"])])
-        
-        fig = go.Figure(data=go.Heatmap(
-            z=heatmap_data,
-            x=resource_types_list,
-            y=regions,
-            colorscale=[[0, '#2ca02c'], [0.5, '#ff7f0e'], [1, '#d62728']],
-            text=[[f"{capacity_data['regional_data'][r]['shortages']} shortages" for r in regions]],
-            texttemplate='%{text}',
-            textfont={"size": 12},
-            colorbar=dict(title="Shortage Intensity")
-        ))
-        
-        fig.update_layout(
-            title="Resource Shortages by Region",
-            height=400,
-            xaxis_title="Resource Type",
-            yaxis_title="Region"
-        )
-        
-        st.plotly_chart(fig, use_container_width=True)
-    else:
-        st.info("No regional data available")
     
     # Hospital Capacity Distribution
     st.subheader("📈 Hospital Capacity Distribution")
@@ -583,9 +577,7 @@ def render_predictive_intelligence():
     
     with col2:
         st.metric("Forecast Coverage", "~75-80%")
-    
-    with col3:
-        st.metric("Model Status", "✅ Production Ready")
+
     
     # MAE Bar Chart
     fig = go.Figure(data=go.Bar(
@@ -716,8 +708,39 @@ def render_agent_reasoning():
                     )
                     
                     if workflow_result.get("success"):
-                        state = workflow_result.get("result", {})
-                        st.session_state.current_workflow_state = state
+                        crew_result = workflow_result.get("result")
+                        tasks = workflow_result.get("tasks", [])
+                        
+                        # Extract data from CrewAI tasks to create a dict-like state
+                        state = {}
+                        if crew_result:
+                            # Try to get data from CrewOutput object
+                            if hasattr(crew_result, 'raw'):
+                                try:
+                                    if isinstance(crew_result.raw, str):
+                                        state = json.loads(crew_result.raw)
+                                    elif isinstance(crew_result.raw, dict):
+                                        state = crew_result.raw
+                                except:
+                                    pass
+                            
+                            # Also try to extract from tasks
+                            for task in tasks:
+                                if hasattr(task, 'output') and task.output:
+                                    try:
+                                        task_output = task.output.raw if hasattr(task.output, 'raw') else str(task.output)
+                                        if isinstance(task_output, str):
+                                            try:
+                                                parsed = json.loads(task_output)
+                                                if isinstance(parsed, dict):
+                                                    state.update(parsed)
+                                            except:
+                                                pass
+                                    except:
+                                        pass
+                        
+                        # Store both the extracted state and original result
+                        st.session_state.current_workflow_state = state if state else crew_result
                         st.session_state.workflow_running = False
                         st.session_state.awaiting_review = True
                     else:
@@ -764,23 +787,27 @@ def render_agent_reasoning():
         
         for node_name, data_key, summary_key in nodes_info:
             with st.expander(f"✅ {node_name}"):
-                if data_key in state and state[data_key]:
-                    if isinstance(state[data_key], list):
-                        st.write(f"**Output:** {len(state[data_key])} items")
-                    else:
-                        st.write(f"**Output:** {state[data_key]}")
+                data_value = safe_get_state(state, data_key)
+                summary_value = safe_get_state(state, summary_key)
                 
-                if summary_key in state and state[summary_key]:
-                    st.write(f"**Summary:** {state[summary_key]}")
+                if data_value:
+                    if isinstance(data_value, list):
+                        st.write(f"**Output:** {len(data_value)} items")
+                    else:
+                        st.write(f"**Output:** {data_value}")
+                
+                if summary_value:
+                    st.write(f"**Summary:** {summary_value}")
         
         # Qdrant Vector Retrieval
         st.subheader("🔍 Similar Past Cases (Qdrant)")
         
-        if state.get("ranked_strategies"):
+        ranked_strategies = safe_get_state(state, "ranked_strategies", [])
+        if ranked_strategies:
             # Create interaction dict for Qdrant query
             interaction = {
                 "selected_recommendation_index": 0,
-                "recommendations": state["ranked_strategies"][:3],
+                "recommendations": ranked_strategies[:3] if isinstance(ranked_strategies, list) else [],
                 "timestamp": datetime.now().isoformat(),
                 "context": {
                     "resource_type": resource_type,
@@ -811,16 +838,17 @@ def render_agent_reasoning():
         # LP Optimization Details
         st.subheader("⚙️ Linear Programming Optimization")
         
-        if state.get("allocation_strategies"):
-            strategy = state["allocation_strategies"][0] if state["allocation_strategies"] else {}
+        allocation_strategies = safe_get_state(state, "allocation_strategies", [])
+        if allocation_strategies:
+            strategy = allocation_strategies[0] if allocation_strategies else {}
             
             col1, col2, col3 = st.columns(3)
             with col1:
-                st.metric("Status", strategy.get("status", "Unknown").title())
+                st.metric("Status", strategy.get("status", "Unknown").title() if isinstance(strategy, dict) else "Completed")
             with col2:
-                st.metric("Strategies Generated", state.get("strategy_count", 0))
+                st.metric("Strategies Generated", safe_get_state(state, "strategy_count", len(allocation_strategies)))
             with col3:
-                exec_time = state.get("execution_time_seconds")
+                exec_time = safe_get_state(state, "execution_time_seconds")
                 if exec_time:
                     st.metric("Solve Time", f"{exec_time:.2f}s")
             
@@ -830,7 +858,7 @@ def render_agent_reasoning():
         # Explainable Recommendations
         st.subheader("💡 Explainable Recommendations")
         
-        ranked_strategies = state.get("ranked_strategies", [])
+        ranked_strategies = safe_get_state(state, "ranked_strategies", [])
         
         if ranked_strategies:
             for i, strategy in enumerate(ranked_strategies[:3]):
@@ -865,7 +893,7 @@ def render_agent_reasoning():
                         st.dataframe(alloc_df, use_container_width=True, hide_index=True)
             
             # AI Explanation
-            explanation = state.get("explanation", "")
+            explanation = safe_get_state(state, "explanation", "")
             if explanation:
                 st.subheader("🤖 AI Reasoning")
                 st.info(explanation)
@@ -999,6 +1027,11 @@ def execute_strategy_selection(
         selected_strategy = ranked_strategies[selected_index]
         
         # Build interaction for backend (matching feedback_node format)
+        # Get session_id from state or generate new one
+        session_id = safe_get_state(state, "session_id", None)
+        if session_id is None:
+            session_id = str(uuid.uuid4())
+        
         interaction = {
             "selected_recommendation_index": selected_index,
             "recommendations": ranked_strategies,
@@ -1007,16 +1040,41 @@ def execute_strategy_selection(
             "context": {
                 "resource_type": st.session_state.resource_type,
                 "simulation_date": st.session_state.simulation_date,
-                "shortage_count": state.get("shortage_count", 0),
-                "session_id": state.get("session_id", str(uuid.uuid4()))
+                "shortage_count": safe_get_state(state, "shortage_count", 0),
+                "session_id": session_id
             }
         }
         
         # Call feedback workflow using LangGraph feedback_node
         # This will call update_preferences API internally
-        updated_state = state.copy()
+        # Ensure state is a dict and has all required fields
+        if isinstance(state, dict):
+            updated_state = state.copy()
+        else:
+            # If state is not a dict (e.g., CrewAI CrewOutput), create a new dict
+            updated_state = {}
+            # Try to extract values using safe_get_state
+            updated_state["resource_type"] = safe_get_state(state, "resource_type", st.session_state.resource_type)
+            updated_state["user_id"] = safe_get_state(state, "user_id", st.session_state.user_id)
+            updated_state["ranked_strategies"] = safe_get_state(state, "ranked_strategies", ranked_strategies)
+            updated_state["shortage_count"] = safe_get_state(state, "shortage_count", 0)
+        
+        # Add/update required fields
         updated_state["user_decision"] = selected_index
         updated_state["user_feedback"] = feedback_text
+        updated_state["ranked_strategies"] = ranked_strategies
+        
+        # Ensure session_id exists (required by feedback_node)
+        if "session_id" not in updated_state:
+            updated_state["session_id"] = str(uuid.uuid4())
+        
+        # Ensure all other required fields exist
+        if "resource_type" not in updated_state:
+            updated_state["resource_type"] = st.session_state.resource_type
+        if "user_id" not in updated_state:
+            updated_state["user_id"] = st.session_state.user_id
+        if "shortage_count" not in updated_state:
+            updated_state["shortage_count"] = 0
         
         # Call feedback node (this calls update_preferences API)
         from agents.nodes.feedback import feedback_node
@@ -1025,7 +1083,7 @@ def execute_strategy_selection(
         # Get preference profile from current state (set by preference_node)
         # This represents the weights used for ranking BEFORE this selection
         # The updated weights will be reflected in the NEXT workflow run
-        preference_profile = state.get("preference_profile", {})
+        preference_profile = safe_get_state(state, "preference_profile", {})
         
         # Store in Qdrant (if available)
         if QDRANT_AVAILABLE:
@@ -1036,8 +1094,16 @@ def execute_strategy_selection(
                 logger.warning(f"Could not store in Qdrant: {e}")
         
         # Save to session history
+        current_date_obj = st.session_state.current_date
+        if isinstance(current_date_obj, str):
+            date_str = current_date_obj
+        elif current_date_obj is not None:
+            date_str = current_date_obj.strftime("%Y-%m-%d")
+        else:
+            date_str = st.session_state.simulation_date or "2024-06-15"
+        
         history_entry = {
-            "date": st.session_state.current_date.strftime("%Y-%m-%d"),
+            "date": date_str,
             "resource_type": st.session_state.resource_type,
             "user_id": st.session_state.user_id,
             "strategies": ranked_strategies,
@@ -1297,9 +1363,12 @@ def render_adaptive_learning():
 def render_sidebar():
     """Render sidebar configuration"""
     with st.sidebar:
-        st.title("🏥 MedFlow AI")
+        st.title("MedFlow")
         st.markdown("**Video Demo Dashboard**")
-        st.markdown("Powered by LangGraph")
+        if CREWAI_AVAILABLE:
+            st.markdown("🔄 Multi-Framework: LangGraph & CrewAI")
+        else:
+            st.markdown("Powered by LangGraph")
         
         st.divider()
         
@@ -1342,10 +1411,43 @@ def render_sidebar():
         )
         st.session_state.user_id = user_id
         
-        # Always use LangGraph
-        st.session_state.framework = "langgraph"
+        st.divider()
         
-        # Date setter
+        # Framework Toggle - Prominent buttons
+        st.subheader("🔄 AI Framework")
+        
+        if CREWAI_AVAILABLE:
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                if st.button(
+                    "🔷 **LangGraph**",
+                    type="primary" if st.session_state.framework == "langgraph" else "secondary",
+                    use_container_width=True,
+                    help="State-based workflow orchestration"
+                ):
+                    st.session_state.framework = "langgraph"
+                    st.rerun()
+            
+            with col2:
+                if st.button(
+                    "🟣 **CrewAI**",
+                    type="primary" if st.session_state.framework == "crewai" else "secondary",
+                    use_container_width=True,
+                    help="Agent-based collaboration"
+                ):
+                    st.session_state.framework = "crewai"
+                    st.rerun()
+            
+            # Show current selection with icon
+            framework_display = "LangGraph" if st.session_state.framework == "langgraph" else "CrewAI"
+            icon = "🔷" if st.session_state.framework == "langgraph" else "🟣"
+            st.success(f"{icon} **Active: {framework_display}**")
+        else:
+            st.session_state.framework = "langgraph"
+            st.info("💡 CrewAI not available - using LangGraph")
+        
+        # Date setter - ensure current_date is initialized
         if "current_date" not in st.session_state or st.session_state.current_date is None:
             if st.session_state.simulation_date:
                 try:
@@ -1363,26 +1465,35 @@ def render_sidebar():
             help="Select the date to simulate"
         )
         
-        # Handle case where date_input returns None
-        if current_date is None:
-            current_date = st.session_state.current_date
-        
-        st.session_state.current_date = current_date
-        st.session_state.simulation_date = current_date.strftime("%Y-%m-%d")
+        # Update session state only if current_date is not None
+        if current_date is not None:
+            st.session_state.current_date = current_date
+            st.session_state.simulation_date = current_date.strftime("%Y-%m-%d")
+        else:
+            # Fallback to existing or default if somehow None
+            if st.session_state.current_date is not None:
+                st.session_state.simulation_date = st.session_state.current_date.strftime("%Y-%m-%d")
+            else:
+                st.session_state.current_date = date(2024, 6, 15)
+                st.session_state.simulation_date = "2024-06-15"
         
         # Next Day button
         if st.button("➡️ Next Day", use_container_width=True):
-            next_date = current_date + timedelta(days=1)
-            if next_date <= date(2024, 7, 30):
-                st.session_state.current_date = next_date
-                st.session_state.simulation_date = next_date.strftime("%Y-%m-%d")
-                # Reset workflow state for new day
-                st.session_state.workflow_running = False
-                st.session_state.awaiting_review = False
-                st.session_state.current_workflow_state = None
-                st.rerun()
+            if current_date is not None:
+                next_date = current_date + timedelta(days=1)
+                max_date = date(2024, 7, 30)
+                if next_date <= max_date:
+                    st.session_state.current_date = next_date
+                    st.session_state.simulation_date = next_date.strftime("%Y-%m-%d")
+                    # Reset workflow state for new day
+                    st.session_state.workflow_running = False
+                    st.session_state.awaiting_review = False
+                    st.session_state.current_workflow_state = None
+                    st.rerun()
+                else:
+                    st.warning("Reached end of outbreak period")
             else:
-                st.warning("Reached end of outbreak period")
+                st.error("Please select a valid date")
         
         st.divider()
         
@@ -1403,7 +1514,7 @@ def render_sidebar():
         st.markdown("**Tech Stack:**")
         st.markdown("FastAPI • LSTM • Supabase • Qdrant • LangGraph")
         st.markdown("---")
-        st.markdown("[GitHub Repository](https://github.com/your-repo/medflow)")
+        st.markdown("[GitHub Repository](https://github.com/anshulLuhsna/MedFlow)")
 
 # === MAIN APP ===
 
@@ -1413,7 +1524,7 @@ def main():
     render_sidebar()
     
     # Header
-    st.title("🏥 MedFlow AI - Video Demo")
+    st.title("MedFlow")
     st.markdown("**Intelligent Resource Allocation System**")
     
     # Quick stats

@@ -1,6 +1,12 @@
 # Agent Workflow Integration Guide
 
-Guide for integrating MedFlow API with LangGraph agents (Phase 5).
+Guide for integrating MedFlow API with agent orchestration frameworks (Phase 5).
+
+**Note:** MedFlow supports **two independent frameworks**:
+- **LangGraph**: State-based workflow orchestration (primary)
+- **CrewAI**: Agent-based collaboration framework (alternative)
+
+Both frameworks implement the same 7-agent workflow and can be toggled at runtime. See `docs/CREWAI_IMPLEMENTATION.md` for CrewAI-specific documentation.
 
 ---
 

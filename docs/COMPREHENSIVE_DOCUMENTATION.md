@@ -42,7 +42,13 @@ MedFlow addresses these challenges through **five integrated ML/AI components**:
 └────────────────────┬────────────────────────────────────────────┘
                      │
 ┌────────────────────▼────────────────────────────────────────────┐
-│              AGENT ORCHESTRATION (LangGraph)                     │
+│         AGENT ORCHESTRATION (Dual Framework Support)              │
+│                                                                   │
+│  ┌────────────────────────┐  ┌────────────────────────┐          │
+│  │   LangGraph (Primary)  │  │   CrewAI (Alternative)  │          │
+│  │  State-based workflow  │  │  Agent-based workflow  │          │
+│  └────────────────────────┘  └────────────────────────┘          │
+│                                                                   │
 │  7-Agent Workflow with Human-in-the-Loop                        │
 │  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌──────────┐       │
 │  │ Analyst  │→ │Forecast  │→ │Optimize  │→ │Preference│       │
@@ -52,6 +58,9 @@ MedFlow addresses these challenges through **five integrated ML/AI components**:
 │  │Reasoning │→ │  Human   │→ │ Feedback │                     │
 │  └──────────┘  │  Review  │  └──────────┘                     │
 │                └──────────┘                                     │
+│                                                                   │
+│  Note: Both frameworks operate independently and can be         │
+│        toggled via dashboard or CLI flag                        │
 └────────────────────┬────────────────────────────────────────────┘
                      │
 ┌────────────────────▼────────────────────────────────────────────┐
@@ -323,17 +332,58 @@ END
 
 ### Technology Choices
 
-**1. LangGraph for Orchestration**
-- **Why LangGraph?**
-  - State-based workflow management
-  - Built-in checkpointing (resume workflows)
-  - Conditional routing support
-  - Native LangChain integration
+**1. Dual Framework Orchestration: LangGraph & CrewAI**
 
-- **Alternatives Considered:**
-  - CrewAI: Less control over workflow routing
-  - Pure LangChain: Too low-level for complex workflows
-  - Custom orchestration: Reinventing the wheel
+MedFlow implements **two independent agent orchestration frameworks** that can be toggled at runtime:
+
+#### LangGraph (Primary Framework)
+- **Why LangGraph?**
+  - State-based workflow management with TypedDict
+  - Built-in checkpointing (resume workflows)
+  - Fine-grained conditional routing support
+  - Native LangChain integration
+  - Explicit graph visualization
+  - Python-only configuration
+
+- **Architecture:**
+  - State: `MedFlowState` TypedDict
+  - Nodes: Python functions with state reducers
+  - Edges: Conditional routing functions
+  - Checkpointing: SqliteSaver for persistence
+
+#### CrewAI (Alternative Framework)
+- **Why CrewAI?**
+  - YAML-based declarative configuration
+  - Role-Goal-Backstory agent framework
+  - Built-in memory and planning features
+  - Task context dependencies
+  - Easier agent/task management
+  - Human-in-the-loop support
+
+- **Architecture:**
+  - Agents: YAML configuration + `@agent` decorator
+  - Tasks: YAML configuration + `@task` decorator
+  - Crew: `@crew` decorator with `@before_kickoff`/`@after_kickoff` hooks
+  - Tools: BaseTool classes wrapping API client methods
+
+#### Framework Independence
+
+**Key Design Principle:** Both frameworks are **completely independent** implementations:
+- ✅ **Separate codebases**: `agents/graph.py` (LangGraph) vs `agents/crewai/` (CrewAI)
+- ✅ **No shared dependencies**: Each framework uses its own state management
+- ✅ **Same backend API**: Both call the same FastAPI endpoints
+- ✅ **Same workflow logic**: Both implement the same 7-agent workflow
+- ✅ **Toggle at runtime**: Users can switch frameworks via dashboard or CLI flag
+
+**When to Use Each:**
+- **LangGraph**: When you need fine-grained state control, explicit graph visualization, or complex conditional routing
+- **CrewAI**: When you prefer YAML configuration, declarative task definitions, or want to leverage CrewAI's built-in features
+
+**Implementation Details:**
+- Dashboard toggle: Sidebar framework selector (🔷 LangGraph / 🟣 CrewAI)
+- CLI flag: `--framework langgraph` or `--framework crewai`
+- State conversion: Dashboard handles conversion between LangGraph's `MedFlowState` dict and CrewAI's `CrewOutput` object
+- See `docs/CREWAI_IMPLEMENTATION.md` for detailed CrewAI documentation
 
 **2. FastAPI for Backend**
 - **Why FastAPI?**
@@ -1147,7 +1197,7 @@ MedFlow AI demonstrates that **complex healthcare resource allocation can be mea
 1. **Predictive Analytics** (LSTM forecasting)
 2. **Optimization Algorithms** (Linear Programming)
 3. **Adaptive Learning** (Hybrid preference system)
-4. **Agent Orchestration** (LangGraph multi-agent workflow)
+4. **Agent Orchestration** (Dual framework: LangGraph & CrewAI - independent implementations)
 5. **Human Oversight** (Human-in-the-loop design)
 
 While trained on synthetic data and requiring further validation, the system showcases a **viable architecture** for intelligent decision support in healthcare logistics. The modular design allows each component to be improved independently, and the human-in-the-loop approach ensures that AI augments rather than replaces human expertise.
@@ -1194,6 +1244,7 @@ The system is ready for **pilot deployment** with a partner hospital network. Su
 
 ### Open Source Libraries
 - **LangGraph**: https://langchain-ai.github.io/langgraph/
+- **CrewAI**: https://docs.crewai.com/
 - **FastAPI**: https://fastapi.tiangolo.com/
 - **Streamlit**: https://streamlit.io/
 - **Qdrant**: https://qdrant.tech/

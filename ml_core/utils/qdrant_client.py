@@ -65,13 +65,25 @@ class InteractionVectorStore:
         self.collection_name = collection_name
         self.vector_size = vector_size
 
-        # Initialize client
-        self.client = QdrantClient(host=host, port=port)
-
-        # Create collection if doesn't exist
-        self._ensure_collection_exists()
-
-        print(f"✓ Qdrant client initialized: {host}:{port}/{collection_name}")
+        # Initialize client with timeout to prevent hanging
+        try:
+            self.client = QdrantClient(
+                host=host,
+                port=port,
+                timeout=5.0  # 5 second timeout for connection
+            )
+            
+            # Test connection
+            self.client.get_collections()
+            
+            # Create collection if doesn't exist
+            self._ensure_collection_exists()
+            
+            print(f"✓ Qdrant client initialized: {host}:{port}/{collection_name}")
+        except Exception as e:
+            print(f"⚠ Qdrant connection failed: {e}")
+            print("  Continuing without vector store")
+            raise
 
     def _ensure_collection_exists(self):
         """Create collection if it doesn't exist"""

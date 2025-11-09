@@ -653,6 +653,7 @@ class PreferenceLearner:
                 }
 
                 # Find similar past interactions
+                # Qdrant client has timeout built-in (5s from initialization)
                 similar = self.vector_store.find_similar_interactions(
                     interaction=mock_interaction,
                     user_id=user_id,
@@ -668,8 +669,9 @@ class PreferenceLearner:
                     scores.append(0.5)
 
             except Exception as e:
+                # Gracefully handle Qdrant errors (connection, timeout, etc.)
                 print(f"⚠ Vector scoring error: {e}")
-                scores.append(0.5)
+                scores.append(0.5)  # Fallback to neutral score
 
         return scores
 
