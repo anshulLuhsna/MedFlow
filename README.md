@@ -24,6 +24,13 @@ MedFlow AI is a proof-of-concept adaptive AI agent that demonstrates how forecas
 4. **Adapts** to decision-maker preferences through reinforcement-learning-inspired preference adaptation via hybrid feedback scoring
 5. **Explains** recommendations with clear, actionable reasoning
 
+## Demo
+
+
+https://github.com/user-attachments/assets/2c34dc16-13c5-45c5-bb36-307245bae9ed
+
+
+
 ### Key Capabilities
 
 - Real-time resource status monitoring across 100+ hospitals
