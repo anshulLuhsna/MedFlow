@@ -191,13 +191,21 @@ class GenerateStrategiesInput(BaseModel):
 
 
 class GenerateStrategiesTool(BaseTool):
-    """Generate multiple allocation strategies"""
+    """
+    Generate multiple allocation strategies.
+    
+    CRITICAL: Uses result_as_answer=True to ensure clean output for next task.
+    """
     name: str = "generate_strategies"
     description: str = (
         "Generate 3 allocation strategies (Cost-Efficient, Maximum Coverage, Balanced). "
-        "Returns strategies array with allocations, costs, and metrics for each strategy."
+        "Returns strategies array with allocations, costs, and metrics for each strategy. "
+        "CALL THIS TOOL ONCE AND RETURN ITS OUTPUT."
     )
     args_schema: Type[BaseModel] = GenerateStrategiesInput
+    
+    # CRITICAL: Force immediate return for clean output
+    result_as_answer: bool = True
     
     def _run(
         self,
@@ -232,13 +240,21 @@ class ScorePreferencesInput(BaseModel):
 
 
 class ScorePreferencesTool(BaseTool):
-    """Rank strategies by user preferences"""
+    """
+    Rank strategies by user preferences.
+    
+    CRITICAL: Uses result_as_answer=True to force immediate return of tool output.
+    """
     name: str = "score_preferences"
     description: str = (
         "Rank allocation strategies based on user preferences. "
-        "Returns ranked_strategies sorted by preference_score and preference_profile."
+        "Returns ranked_strategies sorted by preference_score and preference_profile. "
+        "CALL THIS TOOL ONCE AND RETURN ITS OUTPUT IMMEDIATELY."
     )
     args_schema: Type[BaseModel] = ScorePreferencesInput
+    
+    # CRITICAL: Force immediate return of tool output
+    result_as_answer: bool = True
     
     def _run(self, user_id: str, strategies: List[Dict]) -> str:
         """Execute preference scoring"""

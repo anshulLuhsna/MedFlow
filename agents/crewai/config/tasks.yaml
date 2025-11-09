@@ -66,13 +66,15 @@ generate_strategies_task:
 
 rank_strategies_task:
   description: |
-    Extract the strategies array from the previous task.
+    The previous task (generate_strategies_task) has completed and contains a "strategies" array.
+    Access the strategies from the previous task's output.
+    
     Call the score_preferences tool with:
     - user_id="{user_id}"
-    - strategies=<the strategies array>
+    - strategies=<the strategies array from previous task output>
     
     The tool will rank strategies by preference score.
-    Return the tool's JSON output immediately.
+    Return the tool's JSON output immediately. Do not analyze or process further.
   expected_output: |
     JSON object with fields:
     - ranked_strategies: array of strategies sorted by preference_score (highest first)

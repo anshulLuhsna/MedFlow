@@ -880,16 +880,32 @@ For detailed implementation status, see [`docs/PHASE_4_COMPLETE.md`](docs/PHASE_
 
 ---
 
-## Phase 5: Agentic Layer (LangGraph Workflow)
+## Phase 5: Agentic Layer (Dual Framework Support)
 
 ### Overview
-Phase 5 implements an intelligent multi-agent orchestration system using **LangGraph** that automates resource allocation decisions through specialized AI agents with human-in-the-loop oversight and adaptive preference learning.
+Phase 5 implements an intelligent multi-agent orchestration system with **dual framework support** (LangGraph and CrewAI) that automates resource allocation decisions through specialized AI agents with human-in-the-loop oversight and adaptive preference learning.
 
 **Status:** ✅ Phase 5 Complete - Proof of Concept Ready
 
+### Framework Independence
+
+MedFlow supports **two independent agent orchestration frameworks**:
+
+- **🔷 LangGraph** (Primary): State-based workflow orchestration with TypedDict state management
+- **🟣 CrewAI** (Alternative): Agent-based collaboration with YAML configuration
+
+**Key Design Principle:** Both frameworks are **completely independent**:
+- ✅ Separate codebases (`agents/graph.py` vs `agents/crewai/`)
+- ✅ Independent state management (no shared dependencies)
+- ✅ Same backend API (both call the same FastAPI endpoints)
+- ✅ Same workflow logic (identical 7-agent workflow)
+- ✅ Toggle at runtime (via dashboard or CLI flag)
+
+See [`docs/CREWAI_IMPLEMENTATION.md`](docs/CREWAI_IMPLEMENTATION.md) for detailed CrewAI documentation.
+
 ### Architecture
 
-**7-Agent Workflow:**
+**7-Agent Workflow (Both Frameworks):**
 ```
 1. Data Analyst → Assesses current shortages and outbreaks
 2. Forecasting → Predicts 14-day demand for at-risk hospitals
@@ -901,11 +917,11 @@ Phase 5 implements an intelligent multi-agent orchestration system using **LangG
 ```
 
 **Tech Stack:**
-- **Orchestration:** LangGraph 0.2.28+
-- **State Management:** SQLite checkpointing
-- **LLM:** Groq/Llama 3.3 70B (configurable)
-- **CLI:** Typer + Rich
-- **Web UI:** Streamlit (optional)
+- **Orchestration:** LangGraph 0.2.28+ (primary) | CrewAI 0.80.0+ (alternative)
+- **State Management:** SQLite checkpointing (LangGraph) | Task context (CrewAI)
+- **LLM:** Groq/Llama 3.3 70B (configurable, used by both)
+- **CLI:** Typer + Rich (supports `--framework` flag)
+- **Web UI:** Streamlit (supports framework toggle)
 
 ### Key Features
 
@@ -1071,9 +1087,10 @@ The MedFlow Streamlit Dashboard provides a **web-based user interface** for runn
 
 **Tech Stack:**
 - **Framework:** Streamlit 1.39.0+
-- **Workflow Engine:** LangGraph (same as CLI)
+- **Workflow Engine:** LangGraph (primary) | CrewAI (alternative) - toggleable via sidebar
 - **State Management:** Session state for workflow persistence
 - **UI Components:** Streamlit widgets (forms, tables, buttons)
+- **Framework Toggle:** Sidebar selector to switch between LangGraph and CrewAI at runtime
 
 **Project Structure:**
 ```
